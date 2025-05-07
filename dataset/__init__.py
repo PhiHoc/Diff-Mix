@@ -28,8 +28,10 @@ IMBALANCE_DATASET_NAME_MAPPING = {
 T2I_DATASET_NAME_MAPPING = {
     "cub": CUBBirdHugDatasetForT2I,
     "flower": FlowersDatasetForT2I,
+    "bear": BearHugDataset,
 }
 T2I_IMBALANCE_DATASET_NAME_MAPPING = {
     "cub": CUBBirdHugImbalanceDatasetForT2I,
     "flower": FlowersImbalanceDatasetForT2I,
+    "bear": BearHugDataset,
 }
