@@ -186,7 +186,10 @@ class BearHugDatasetForT2I(torch.utils.data.Dataset):
         image = self.get_image_by_idx(idx)
         prompt = self.get_prompt_by_idx(idx)
 
-        return dict(pixel_values=self.transform(image), caption=prompt)
+        return {
+            "pixel_values": self.transform(image),
+            "caption": prompt,
+        }
 
     def get_image_by_idx(self, idx: int) -> Image.Image:
 
