@@ -11,7 +11,7 @@ from PIL import Image
 from dataset.base import HugFewShotDataset
 from dataset.template import IMAGENET_TEMPLATES_TINY
 
-HUG_LOCAL_IMAGE_TRAIN_DIR = "/content/drive/MyDrive/bear/train"
+HUG_LOCAL_IMAGE_TRAIN_DIR = "/content/drive/MyDrive/Rare Animal/Bear/diffmix"
 
 
 class BearHugDataset(HugFewShotDataset):
