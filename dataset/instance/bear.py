@@ -1,61 +1,94 @@
-import os
+import random
+from collections import defaultdict
+from typing import Tuple
+
+import numpy as np
+import torch
+import torchvision.transforms as transforms
 from datasets import load_dataset
+from PIL import Image
+
 from dataset.base import HugFewShotDataset
+from dataset.template import IMAGENET_TEMPLATES_TINY
 
-HUG_LOCAL_IMAGE_TRAIN_DIR = "/content/drive/MyDrive/Rare Animal/Bear/diffmix"
+HUG_LOCAL_IMAGE_TRAIN_DIR = "/content/drive/MyDrive/bear/train"
 
-# Define class names (you can customize this as needed)
-CLASS_NAMES = [
-    "Asiatic Black Bear",
-    "Kodiak Bear",
-    "Andean Bear",
-    "Malayan Sun Bear",
-    "Sri Lankan Sloth Bear",
-    "Kamchatka Brown Bear",
-    "Grizzly Bear",
-    "Ussuri Brown Bear",
-    "Syrian Brown Bear",
-    "Himalayan Brown Bear"
-]
 
 class BearHugDataset(HugFewShotDataset):
-    def __init__(self, examples_per_class=-1, synthetic_probability=0.0, synthetic_dir=None, target_class_num=None):
-        # Load dataset from local directory
-        self.dataset = load_dataset("imagefolder", data_dir=HUG_LOCAL_IMAGE_TRAIN_DIR)["train"]
-        self.num_classes = len(CLASS_NAMES)
-        self.class_names = CLASS_NAMES
-        self.class2label = {name: i for i, name in enumerate(CLASS_NAMES)}
-        self.label2class = {i: name for i, name in enumerate(CLASS_NAMES)}
+    super_class_name = "bear"
 
-        # Build label_to_indices mapping
-        self.label_to_indices = {i: [] for i in range(self.num_classes)}
-        for idx, sample in enumerate(self.dataset):
-            label = sample["label"]  # Integer label from directory name
-            self.label_to_indices[label].append(idx)
+    def __init__(
+        self,
+        *args,
+        split: str = "train",
+        seed: int = 0,
+        image_train_dir: str = HUG_LOCAL_IMAGE_TRAIN_DIR,
+        examples_per_class: int = -1,
+        synthetic_probability: float = 0.5,
+        return_onehot: bool = False,
+        soft_scaler: float = 0.9,
+        synthetic_dir: str = None,
+        image_size: int = 512,
+        crop_size: int = 448,
+        **kwargs,
+    ):
+        super().__init__(
+            *args,
+            split=split,
+            examples_per_class=examples_per_class,
+            synthetic_probability=synthetic_probability,
+            return_onehot=return_onehot,
+            soft_scaler=soft_scaler,
+            synthetic_dir=synthetic_dir,
+            image_size=image_size,
+            crop_size=crop_size,
+            **kwargs,
+        )
 
-        # Apply few-shot sampling if needed
-        if examples_per_class > 0:
-            self._apply_few_shot_sampling(examples_per_class)
+        dataset = load_dataset("imagefolder", data_dir=image_train_dir)["train"]
+        random.seed(seed)
+        np.random.seed(seed)
 
-        # Load synthetic data if provided
-        if synthetic_dir is not None:
-            self.parse_syn_data_pd(synthetic_dir, target_class_num)
+        if examples_per_class is not None and examples_per_class > 0:
+            all_labels = dataset["label"]
+            label_to_indices = defaultdict(list)
+            for i, label in enumerate(all_labels):
+                label_to_indices[label].append(i)
 
-        # Initialize base class
-        super().__init__(examples_per_class, synthetic_probability, synthetic_dir, target_class_num)
+            _all_indices = []
+            for key, items in label_to_indices.items():
+                try:
+                    sampled_indices = random.sample(items, examples_per_class)
+                except ValueError:
+                    print(f"{key}: Sample larger than population or is negative, using random.choices instead")
+                    sampled_indices = random.choices(items, k=examples_per_class)
 
-    def get_image_by_idx(self, idx):
-        return self.dataset[idx]["image"]
+                _all_indices.extend(sampled_indices)
+            dataset = dataset.select(_all_indices)
 
-    def get_label_by_idx(self, idx):
-        return self.dataset[idx]["label"]
+        self.dataset = dataset
+        self.class_names = [
+            name.replace("/", " ") for name in dataset.features["label"].names
+        ]
+        self.num_classes = len(self.class_names)
+        self.class2label = self.dataset.features["label"]._str2int
+        self.label2class = {v: k.replace("/", " ") for k, v in self.class2label.items()}
 
-    def get_metadata_by_idx(self, idx):
-        label = self.dataset[idx]["label"]
-        return {
-            "class_name": self.label2class[label],
-            "label": label
-        }
+        self.label_to_indices = defaultdict(list)
+        for i, label in enumerate(self.dataset["label"]):
+            self.label_to_indices[label].append(i)
 
     def __len__(self):
         return len(self.dataset)
+
+    def get_image_by_idx(self, idx: int) -> Image.Image:
+        return self.dataset[idx]["image"].convert("RGB")
+
+    def get_label_by_idx(self, idx: int) -> int:
+        return self.dataset[idx]["label"]
+
+    def get_metadata_by_idx(self, idx: int) -> dict:
+        return dict(
+            name=self.label2class[self.get_label_by_idx(idx)],
+            super_class=self.super_class_name,
+        )
