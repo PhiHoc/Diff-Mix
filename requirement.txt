@@ -1,0 +1,6 @@
+torch==2.0.1+cu118
+diffusers==0.25.1
+transformers==4.36.2
+datasets==2.16.1
+accelerate==0.26.1
+numpy==1.24.4

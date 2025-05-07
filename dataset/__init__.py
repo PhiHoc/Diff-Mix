@@ -7,6 +7,7 @@ from .instance.food import *
 from .instance.pascal import *
 from .instance.pet import *
 from .instance.waterbird import *
+from .instance.bear import *
 
 DATASET_NAME_MAPPING = {
     "cub": CUBBirdHugDataset,
@@ -17,10 +18,12 @@ DATASET_NAME_MAPPING = {
     "food": FoodHugDataset,
     "pascal": PascalDataset,
     "dog": StanfordDogDataset,
+    "bear": BearHugDataset,
 }
 IMBALANCE_DATASET_NAME_MAPPING = {
     "cub": CUBBirdHugImbalanceDataset,
     "flower": FlowersImbalanceDataset,
+     "bear": BearHugDataset,
 }
 T2I_DATASET_NAME_MAPPING = {
     "cub": CUBBirdHugDatasetForT2I,

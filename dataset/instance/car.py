@@ -5,7 +5,7 @@ from typing import Any, Dict, Tuple
 import numpy as np
 import torch
 import torchvision.transforms as transforms
-from datasets import load_dataset
+from datasets import f
 from PIL import Image
 
 from dataset.base import HugFewShotDataset
