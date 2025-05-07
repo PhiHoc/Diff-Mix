@@ -11,8 +11,7 @@ from PIL import Image
 from dataset.base import HugFewShotDataset
 from dataset.template import IMAGENET_TEMPLATES_TINY
 
-HUG_LOCAL_IMAGE_TRAIN_DIR = "/content/drive/MyDrive/RareAnimal/Bear/diffmix"
-
+HUG_LOCAL_IMAGE_TRAIN_DIR = "/content/drive/MyDrive/bear/train"
 
 class BearHugDataset(HugFewShotDataset):
     super_class_name = "bear"
@@ -49,6 +48,7 @@ class BearHugDataset(HugFewShotDataset):
         random.seed(seed)
         np.random.seed(seed)
 
+        # Sample few-shot if needed
         if examples_per_class is not None and examples_per_class > 0:
             all_labels = dataset["label"]
             label_to_indices = defaultdict(list)
@@ -67,9 +67,7 @@ class BearHugDataset(HugFewShotDataset):
             dataset = dataset.select(_all_indices)
 
         self.dataset = dataset
-        self.class_names = [
-            name.replace("/", " ") for name in dataset.features["label"].names
-        ]
+        self.class_names = [name.replace("/", " ") for name in dataset.features["label"].names]
         self.num_classes = len(self.class_names)
         self.class2label = self.dataset.features["label"]._str2int
         self.label2class = {v: k.replace("/", " ") for k, v in self.class2label.items()}
@@ -92,3 +90,17 @@ class BearHugDataset(HugFewShotDataset):
             name=self.label2class[self.get_label_by_idx(idx)],
             super_class=self.super_class_name,
         )
+
+    def __getitem__(self, idx: int) -> dict:
+        image = self.get_image_by_idx(idx)
+        label = self.get_label_by_idx(idx)
+        class_name = self.label2class[label]
+
+        # Generate a simple placeholder caption
+        caption = f"An image of a {class_name}."
+
+        return {
+            "image": image,
+            "label": label,
+            "caption": caption,  # Add placeholder caption
+        }
