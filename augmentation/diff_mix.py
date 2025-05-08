@@ -100,12 +100,12 @@ class DreamboothLoraMixup(GenerativeMixup):
                 model_path,
                 use_auth_token=True,
                 revision=revision,
-                local_files_only=True,
+                local_files_only=False,
                 torch_dtype=torch.float16,
             ).to(device)
 
             scheduler = DPMSolverMultistepScheduler.from_config(
-                DreamboothLoraMixup.pipe.scheduler.config, local_files_only=True
+                DreamboothLoraMixup.pipe.scheduler.config, local_files_only=False
             )
             self.placeholder2name = {}
             self.name2placeholder = {}
@@ -203,12 +203,12 @@ class DreamboothLoraGeneration(GenerativeMixup):
                 model_path,
                 use_auth_token=True,
                 revision=revision,
-                local_files_only=True,
+                local_files_only=False,
                 torch_dtype=torch.float16,
             ).to(device)
 
             scheduler = DPMSolverMultistepScheduler.from_config(
-                DreamboothLoraGeneration.pipe.scheduler.config, local_files_only=True
+                DreamboothLoraGeneration.pipe.scheduler.config, local_files_only=False
             )
             self.placeholder2name = None
             self.name2placeholder = None
