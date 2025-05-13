@@ -11,11 +11,11 @@ from PIL import Image
 from dataset.base import HugFewShotDataset
 from dataset.template import IMAGENET_TEMPLATES_TINY
 
-HUG_LOCAL_IMAGE_TRAIN_DIR = "/content/drive/MyDrive/RareAnimal/Turtle/diffmix"
+HUG_LOCAL_IMAGE_TRAIN_DIR = "/content/drive/MyDrive/RareAnimal/Python/diffmix"
 
 
-class TurtleHugDataset(HugFewShotDataset):
-    super_class_name = "turtle"
+class PythonHugDataset(HugFewShotDataset):
+    super_class_name = "python"
 
     def __init__(
         self,
@@ -94,9 +94,9 @@ class TurtleHugDataset(HugFewShotDataset):
         )
 
 
-class TurtleHugDatasetForT2I(torch.utils.data.Dataset):
+class PythonHugDatasetForT2I(torch.utils.data.Dataset):
 
-    super_class_name = "turtle"
+    super_class_name = "python"
 
     def __init__(
         self,
