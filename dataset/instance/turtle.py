@@ -11,7 +11,7 @@ from PIL import Image
 from dataset.base import HugFewShotDataset
 from dataset.template import IMAGENET_TEMPLATES_TINY
 
-HUG_LOCAL_IMAGE_TRAIN_DIR = "/content/drive/MyDrive/RareAnimal/Turtle/diffmix"
+HUG_LOCAL_IMAGE_TRAIN_DIR = "/kaggle/input/turtle-species"
 
 
 class TurtleHugDataset(HugFewShotDataset):
