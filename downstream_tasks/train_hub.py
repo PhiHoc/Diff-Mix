@@ -20,10 +20,23 @@ from downstream_tasks.losses import LabelSmoothingLoss
 from downstream_tasks.mixup import CutMix, mixup_data
 from utils.misc import checked_has_run
 from utils.network import freeze_model
-
+import json
 #######################
 ##### 1 - Setting #####
 #######################
+
+def save_metrics_to_json(metrics, filename):
+    with open(filename, 'w') as f:
+        json.dump(metrics, f)
+
+def save_checkpoint(model, optimizer, epoch, metrics, path):
+    checkpoint = {
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'epoch': epoch,
+        'metrics': metrics
+    }
+    torch.save(checkpoint, path)
 
 
 ##### args setting
@@ -194,6 +207,7 @@ lr_begin = args.lr
 seed = int(args.seed)
 datasets_name = args.dataset
 num_workers = int(args.num_workers)
+google_drive_dir = "/content/drive/MyDrive/RareAnimal/training_logs"
 exp_dir = "outputs/result/{}/{}{}".format(
     args.group_note, datasets_name, formate_note(args)
 )  # the folder to save model
@@ -294,6 +308,13 @@ MODEL_DICT = {
 ##### Model settings
 if args.model == "resnet18":
     net = resnet18(
+        pretrained=False
+    )  # to use more models, see https://pytorch.org/vision/stable/models.html
+    net.fc = nn.Linear(
+        net.fc.in_features, nb_class
+    )  # set fc layer of model with exact class number of current dataset
+elif args.model == "resnet18pretrain":
+    net = resnet18(
         pretrained=True
     )  # to use more models, see https://pytorch.org/vision/stable/models.html
     net.fc = nn.Linear(
@@ -390,11 +411,33 @@ elif use_amp == 2:  # use torch.cuda.amp
 ########################
 ##### 2 - Training #####
 ########################
+
+# Resume check point
+checkpoint_path = os.path.join(google_drive_dir, f"{args.model}_checkpoint.pth")
+metrics_path = os.path.join(google_drive_dir, f"{args.model}_metrics.json")
+
+start_epoch = 0
+train_losses, val_losses = [], []
+train_accuracies, val_accuracies = [], []
+best_accuracy = 0.0
+
+if os.path.exists(checkpoint_path):
+    print(f"Resuming training from checkpoint: {checkpoint_path}")
+    checkpoint = torch.load(checkpoint_path, map_location="cuda")
+    net.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    start_epoch = checkpoint['epoch'] + 1
+    metrics = checkpoint['metrics']
+    train_losses = metrics['train_losses']
+    val_losses = metrics['val_losses']
+    train_accuracies = metrics['train_accuracies']
+    val_accuracies = metrics['val_accuracies']
+    best_accuracy = metrics['best_accuracy']
+
 net.cuda()
 min_train_loss = float("inf")
 max_eval_acc = 0
-
-for epoch in range(args.nepoch):
+for epoch in range(start_epoch, args.nepoch):
     print("\n===== Epoch: {} =====".format(epoch))
     net.train()  # set model to train mode, enable Batch Normalization and Dropout
     lr_now = optimizer.param_groups[0]["lr"]
@@ -471,6 +514,27 @@ for epoch in range(args.nepoch):
             print(
                 "Test | Acc: {:.3f}% ({}/{})".format(eval_acc, eval_correct, eval_total)
             )
+
+            # Store check point
+            train_losses.append(train_loss)
+            val_losses.append(eval_acc)
+            train_accuracies.append(train_acc)
+            val_accuracies.append(eval_acc)
+
+            if eval_acc > best_accuracy:
+                best_accuracy = eval_acc
+                print(f"New best accuracy: {best_accuracy:.2f}%")
+
+            metrics = {
+                "train_losses": train_losses,
+                "val_losses": val_losses,
+                "train_accuracies": train_accuracies,
+                "val_accuracies": val_accuracies,
+                "best_accuracy": best_accuracy
+            }
+
+            save_metrics_to_json(metrics, metrics_path)
+            save_checkpoint(net, optimizer, epoch, metrics, checkpoint_path)
 
             ##### Logging
             with open(
