@@ -12,7 +12,7 @@ from dataset.base import HugFewShotDataset
 from dataset.template import IMAGENET_TEMPLATES_TINY
 
 HUG_LOCAL_IMAGE_TRAIN_DIR = "/content/drive/MyDrive/RareAnimal/Turtle/diffmix"
-HUG_LOCAL_IMAGE_TEST_DIR = "/content/drive/MyDrive/Turtle/test_diffmix"
+HUG_LOCAL_IMAGE_TEST_DIR = "/content/drive/MyDrive/RareAnimal/Turtle/test_diffmix"
 
 class TurtleHugDataset(HugFewShotDataset):
     super_class_name = "turtle"
