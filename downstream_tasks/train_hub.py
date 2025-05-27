@@ -68,7 +68,7 @@ parser.add_argument(
     "-m",
     "--model",
     default="resnet50",
-    choices=["resnet50", "vit_b_16"],
+    choices=["resnet18","resnet18pretrain","resnet50", "vit_b_16"],
     help="model name",
 )
 parser.add_argument("-b", "--batch_size", default=32, type=int, help="batch_size")
