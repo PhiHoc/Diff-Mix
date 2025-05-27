@@ -21,9 +21,15 @@ from downstream_tasks.mixup import CutMix, mixup_data
 from utils.misc import checked_has_run
 from utils.network import freeze_model
 import json
+import pytorch_warmup
+from torch.cuda.amp import GradScaler, autocast
+
 #######################
 ##### 1 - Setting #####
 #######################
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
 
 def save_metrics_to_json(metrics, filename):
     with open(filename, 'w') as f:
@@ -41,7 +47,6 @@ def save_checkpoint(model, optimizer, epoch, metrics, path):
 
 ##### args setting
 def formate_note(args):
-
     args.use_warmup = True
     note = f"{args.note}"
     if args.syndata_dir is not None:
@@ -55,106 +60,35 @@ def formate_note(args):
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-d", "--dataset", default="cub", help="dataset name")
-parser.add_argument(
-    "--syndata_dir",
-    type=str,
-    nargs="+",
-    help="key for indexing synthetic data",
-)
-parser.add_argument(
-    "--syndata_p", default=0.1, type=float, help="synthetic probability"
-)
-parser.add_argument(
-    "-m",
-    "--model",
-    default="resnet50",
-    choices=["resnet18","resnet18pretrain","resnet50", "vit_b_16"],
-    help="model name",
-)
+parser.add_argument("--syndata_dir", type=str, nargs="+", help="key for indexing synthetic data")
+parser.add_argument("--syndata_p", default=0.1, type=float, help="synthetic probability")
+parser.add_argument("-m", "--model", default="resnet50",
+                    choices=["resnet18","resnet18pretrain","resnet50", "vit_b_16"], help="model name")
 parser.add_argument("-b", "--batch_size", default=32, type=int, help="batch_size")
 parser.add_argument("--lr", default=0.01, type=float, help="learning rate")
 parser.add_argument("--weight_decay", default=5e-4, type=float)
 parser.add_argument("--use_cutmix", default=False, action="store_true")
 parser.add_argument("--use_mixup", default=False, action="store_true")
 parser.add_argument("--criterion", default="ls", type=str)
-parser.add_argument("-g", "--gpu", default="1", type=int)
-parser.add_argument("-w", "--num_workers", default=12, help="num_workers of dataloader")
-parser.add_argument("-s", "--seed", default=2020, help="random seed")
-parser.add_argument(
-    "-n",
-    "--note",
-    default="",
-    help="exp note, append after exp folder, fgvc(_r50) for example",
-)
-parser.add_argument(
-    "-p",
-    "--group_note",
-    default="debug",
-)
-parser.add_argument(
-    "-a",
-    "--amp",
-    default=0,
-    help="0: w/o amp, 1: w/ nvidia apex.amp, 2: w/ torch.cuda.amp",
-)
-parser.add_argument(
-    "-rs",
-    "--resize",
-    default=512,
-    type=int,
-)
-parser.add_argument(
-    "--res_mode",
-    default="224",
-    type=str,
-)
-parser.add_argument(
-    "-cs",
-    "--crop_size",
-    type=int,
-    default=448,
-)
-parser.add_argument(
-    "--examples_per_class",
-    type=int,
-    default=-1,
-)
-parser.add_argument(
-    "--gamma",
-    type=float,
-    default=1.0,
-    help="label smoothing factor for synthetic data",
-)
-parser.add_argument(
-    "-mp",
-    "--mixup_probability",
-    type=float,
-    default=0.5,
-)
-
-parser.add_argument(
-    "-ne",
-    "--nepoch",
-    type=int,
-    default=448,
-)
-parser.add_argument(
-    "--optimizer",
-    type=str,
-    default="sgd",
-)
-
-parser.add_argument(
-    "-fs",
-    "--finetune_strategy",
-    type=str,
-    default=None,
-)
+parser.add_argument("-g", "--gpu", default=0, type=int, help="GPU id")
+parser.add_argument("-w", "--num_workers", default=4, type=int, help="num_workers of dataloader (set <=4 for Colab)")
+parser.add_argument("-s", "--seed", default=2020, type=int, help="random seed")
+parser.add_argument("-n", "--note", default="", help="exp note, append after exp folder")
+parser.add_argument("-p", "--group_note", default="debug")
+parser.add_argument("-a", "--amp", default=0, type=int, help="0: w/o amp, 1: nvidia apex.amp, 2: torch.cuda.amp")
+parser.add_argument("-rs", "--resize", default=512, type=int)
+parser.add_argument("--res_mode", default="224", type=str)
+parser.add_argument("-cs", "--crop_size", type=int, default=448)
+parser.add_argument("--examples_per_class", type=int, default=-1)
+parser.add_argument("--gamma", type=float, default=1.0, help="label smoothing factor for synthetic data")
+parser.add_argument("-mp", "--mixup_probability", type=float, default=0.5)
+parser.add_argument("-ne", "--nepoch", type=int, default=448)
+parser.add_argument("--optimizer", type=str, default="sgd")
+parser.add_argument("-fs", "--finetune_strategy", type=str, default=None)
 args = parser.parse_args()
 
 
 ##### exp setting
-
 if args.optimizer == "sgd":
     base_lr = 0.02
 elif args.optimizer == "adamw":
@@ -174,7 +108,7 @@ elif args.res_mode == "224":
     elif args.model == "vit_b_16":
         args.batch_size = 128
     elif args.model == "resnet18" or args.model == "resnet18pretrain":
-        args.batch_size = 256  # Add batch size for resnet18 in 224 resolution
+        args.batch_size = 256
     else:
         raise ValueError("model not supported")
 elif args.res_mode == "384":
@@ -184,8 +118,8 @@ elif args.res_mode == "384":
         args.batch_size = 128
     elif args.model == "vit_b_16":
         args.batch_size = 32
-    elif args.model == "resnet18" or args.model == "resnet18pretrain" :
-        args.batch_size = 128  # Add batch size for resnet18 in 384 resolution
+    elif args.model == "resnet18" or args.model == "resnet18pretrain":
+        args.batch_size = 128
     else:
         raise ValueError("model not supported")
 elif args.res_mode == "448":
@@ -195,34 +129,31 @@ elif args.res_mode == "448":
         args.batch_size = 64
     elif args.model == "vit_b_16":
         args.batch_size = 32
-    elif args.model == "resnet18":
-        args.batch_size = 64  # Add batch size for resnet18 in 448 resolution
+    elif args.model == "resnet18" or args.model == "resnet18pretrain":
+        args.batch_size = 64
     else:
         raise ValueError("model not supported")
 else:
     raise ValueError("res_mode not supported")
 
+# Override num_workers for Colab environment to avoid worker errors
+args.num_workers = min(args.num_workers, 4)
 
-use_amp = int(args.amp)  # use amp to accelerate training
-
-##### data settings
-# data_dir = join('data', datasets_name)
+use_amp = int(args.amp)
 
 lr_begin = args.lr
 seed = int(args.seed)
 datasets_name = args.dataset
-num_workers = int(args.num_workers)
+num_workers = args.num_workers
 google_drive_dir = "/content/drive/MyDrive/RareAnimal/training_logs"
 exp_dir = "outputs/result/{}/{}{}".format(
     args.group_note, datasets_name, formate_note(args)
-)  # the folder to save model
-
-# if checked_has_run(exp_dir, vars(args)):
-#     exit()
-
+)
 
 ##### CUDA device setting
-torch.cuda.set_device(args.gpu)
+# Use device from torch.device
+device = torch.device(f"cuda:{args.gpu}" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
 
 ##### Random seed setting
 random.seed(seed)
@@ -239,16 +170,12 @@ torch.backends.cudnn.benchmark = False
 re_size = args.resize
 crop_size = args.crop_size
 
-if args.syndata_dir is not None:
-    synthetic_dir = args.syndata_dir
-else:
-    synthetic_dir = None
+synthetic_dir = args.syndata_dir if args.syndata_dir is not None else None
 
 return_onehot = True
 gamma = args.gamma
 synthetic_probability = args.syndata_p
 examples_per_class = args.examples_per_class
-
 
 def to_tensor(x):
     if isinstance(x, int):
@@ -260,12 +187,11 @@ def to_tensor(x):
     else:
         raise NotImplementedError
 
-
 def collate_fn(examples):
     pixel_values = torch.stack([example["pixel_values"] for example in examples])
     labels = torch.stack([to_tensor(example["label"]) for example in examples])
     dtype = torch.float32 if len(labels.size()) == 2 else torch.long
-    labels.to(dtype=dtype)
+    labels = labels.to(dtype=dtype)
     return {"pixel_values": pixel_values, "labels": labels}
 
 
@@ -289,6 +215,7 @@ if args.use_cutmix:
     train_set = CutMix(
         train_set, num_class=train_set.num_classes, prob=args.mixup_probability
     )
+
 train_loader = DataLoader(
     train_set,
     batch_size=batch_size,
@@ -304,120 +231,77 @@ eval_loader = DataLoader(
     num_workers=num_workers,
 )
 
-
 MODEL_DICT = {
     "resnet50": resnet50,
     "resnet18": resnet18,
     "vit_b_16": vit_b_16,
 }
+
 ##### Model settings
 if args.model == "resnet18":
-    net = resnet18(
-        pretrained=False
-    )  # to use more models, see https://pytorch.org/vision/stable/models.html
-    net.fc = nn.Linear(
-        net.fc.in_features, nb_class
-    )  # set fc layer of model with exact class number of current dataset
-elif args.model == "resnet18pretrain":
-    net = resnet18(
-        pretrained=True
-    )  # to use more models, see https://pytorch.org/vision/stable/models.html
-    net.fc = nn.Linear(
-        net.fc.in_features, nb_class
-    )  # set fc layer of model with exact class number of current dataset
-
-elif args.model == "resnet50":
-    net = resnet50(
-        pretrained=True
-    )  # to use more models, see https://pytorch.org/vision/stable/models.html
+    net = resnet18(pretrained=False)
     net.fc = nn.Linear(net.fc.in_features, nb_class)
-    # set fc layer of model with exact class number of current dataset
-
+elif args.model == "resnet18pretrain":
+    net = resnet18(pretrained=True)
+    net.fc = nn.Linear(net.fc.in_features, nb_class)
+elif args.model == "resnet50":
+    net = resnet50(pretrained=True)
+    net.fc = nn.Linear(net.fc.in_features, nb_class)
 elif args.model == "vit_b_16":
-    net = vit_b_16(
-        weights=ViT_B_16_Weights.IMAGENET1K_SWAG_E2E_V1,
-    )
+    net = vit_b_16(weights=ViT_B_16_Weights.IMAGENET1K_SWAG_E2E_V1)
     net.heads.head = nn.Linear(net.heads.head.in_features, nb_class)
 
+net = net.to(device)
+
 for param in net.parameters():
-    param.requires_grad = True  # make parameters in model learnable
+    param.requires_grad = True
 
 if args.finetune_strategy is not None and args.model == "resnet50":
-
     freeze_model(net, args.finetune_strategy)
 
 ##### optimizer setting
-#
 if args.criterion == "ce":
     criterion = nn.CrossEntropyLoss()
 elif args.criterion == "ls":
-    criterion = LabelSmoothingLoss(
-        classes=nb_class, smoothing=0.1
-    )  # label smoothing to improve performance
+    criterion = LabelSmoothingLoss(classes=nb_class, smoothing=0.1)
 else:
     raise NotImplementedError
 
 if args.optimizer == "sgd":
-    optimizer = torch.optim.SGD(
-        net.parameters(),
-        lr=lr_begin,
-        momentum=0.9,
-        weight_decay=args.weight_decay,
-    )
+    optimizer = torch.optim.SGD(net.parameters(), lr=lr_begin, momentum=0.9, weight_decay=args.weight_decay)
 elif args.optimizer == "adamw":
-    optimizer = torch.optim.AdamW(
-        net.parameters(),
-        lr=lr_begin,
-    )
+    optimizer = torch.optim.AdamW(net.parameters(), lr=lr_begin)
 else:
     raise ValueError("optimizer not supported")
 
 total_steps = args.nepoch * len(train_loader.dataset) // batch_size
-
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)
-import pytorch_warmup
-
-warmup_scheduler = pytorch_warmup.LinearWarmup(
-    optimizer, warmup_period=max(int(0.1 * total_steps), 1)
-)
-
+warmup_scheduler = pytorch_warmup.LinearWarmup(optimizer, warmup_period=max(int(0.1 * total_steps), 1))
 
 ##### file/folder prepare
 if not os.path.exists(exp_dir):
     os.makedirs(exp_dir)
 
 shutil.copyfile(__file__, exp_dir + "/train_hub.py")
-# save args to yaml
+
 with open(os.path.join(exp_dir, "config.yaml"), "w+", encoding="utf-8") as file:
     yaml.dump(vars(args), file)
 
 with open(os.path.join(exp_dir, "train_log.csv"), "w+", encoding="utf-8") as file:
     file.write("Epoch, lr, Train_Loss, Train_Acc, Test_Acc\n")
 
-
-##### Apex
-if use_amp == 1:  # use nvidia apex.amp
+##### Apex or AMP setup
+if use_amp == 1:
     print("\n===== Using NVIDIA AMP =====")
     from apex import amp
-
-    net.cuda()
     net, optimizer = amp.initialize(net, optimizer, opt_level="O1")
-    with open(os.path.join(exp_dir, "train_log.csv"), "a+", encoding="utf-8") as file:
-        file.write("===== Using NVIDIA AMP =====\n")
-elif use_amp == 2:  # use torch.cuda.amp
+elif use_amp == 2:
     print("\n===== Using Torch AMP =====")
-    from torch.cuda.amp import GradScaler, autocast
-
     scaler = GradScaler()
-    with open(os.path.join(exp_dir, "train_log.csv"), "a+", encoding="utf-8") as file:
-        file.write("===== Using Torch AMP =====\n")
+else:
+    scaler = None
 
-
-########################
-##### 2 - Training #####
-########################
-
-# Resume check point
+##### Resume checkpoint
 checkpoint_path = os.path.join(google_drive_dir, f"{args.model}_checkpoint.pth")
 metrics_path = os.path.join(google_drive_dir, f"{args.model}_metrics.json")
 
@@ -428,7 +312,7 @@ best_accuracy = 0.0
 
 if os.path.exists(checkpoint_path):
     print(f"Resuming training from checkpoint: {checkpoint_path}")
-    checkpoint = torch.load(checkpoint_path, map_location="cuda")
+    checkpoint = torch.load(checkpoint_path, map_location=device)
     net.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     start_epoch = checkpoint['epoch'] + 1
@@ -439,50 +323,55 @@ if os.path.exists(checkpoint_path):
     val_accuracies = metrics['val_accuracies']
     best_accuracy = metrics['best_accuracy']
 
-net.cuda()
+    # Move optimizer state tensors to device
+    for state in optimizer.state.values():
+        for k, v in state.items():
+            if isinstance(v, torch.Tensor):
+                state[k] = v.to(device)
+
+##### Training loop
 min_train_loss = float("inf")
 max_eval_acc = 0
-for epoch in range(start_epoch, args.nepoch):
-    print("\n===== Epoch: {} =====".format(epoch))
-    net.train()  # set model to train mode, enable Batch Normalization and Dropout
-    lr_now = optimizer.param_groups[0]["lr"]
-    train_loss = train_correct = train_total = idx = 0
 
-    for batch_idx, (batch) in enumerate(tqdm(train_loader, ncols=80)):
+for epoch in range(start_epoch, args.nepoch):
+    print(f"\n===== Epoch: {epoch} =====")
+    net.train()
+    lr_now = optimizer.param_groups[0]["lr"]
+    train_loss = 0.0
+    train_correct = 0
+    train_total = 0
+    idx = 0
+
+    for batch_idx, batch in enumerate(tqdm(train_loader, ncols=80)):
         idx = batch_idx
-        optimizer.zero_grad()  # Sets the gradients to zero
-        # inputs, targets = inputs.cuda(), targets.cuda()
-        inputs = batch["pixel_values"].cuda()
-        targets = batch["labels"].cuda()
+        optimizer.zero_grad()
+        inputs = batch["pixel_values"].to(device)
+        targets = batch["labels"].to(device)
 
         if args.use_mixup and np.random.rand() < args.mixup_probability:
-            inputs, targets = mixup_data(
-                inputs, targets, alpha=1.0, num_classes=nb_class
-            )
+            inputs, targets = mixup_data(inputs, targets, alpha=1.0, num_classes=nb_class)
 
         if inputs.shape[0] < batch_size:
             continue
-        ##### amp setting
-        if use_amp == 1:  # use nvidia apex.amp
-            x = net(inputs)
-            loss = criterion(x, targets)
-            with amp.scale_loss(loss, optimizer) as scaled_loss:
+
+        if use_amp == 1:
+            with amp.scale_loss(criterion(net(inputs), targets), optimizer) as scaled_loss:
                 scaled_loss.backward()
             optimizer.step()
-        elif use_amp == 2:  # use torch.cuda.amp
+        elif use_amp == 2:
             with autocast():
-                x = net(inputs)
-                loss = criterion(x, targets)
+                outputs = net(inputs)
+                loss = criterion(outputs, targets)
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
         else:
-            x = net(inputs)
-            loss = criterion(x, targets)
+            outputs = net(inputs)
+            loss = criterion(outputs, targets)
             loss.backward()
             optimizer.step()
 
-        _, predicted = torch.max(x.data, 1)
+        _, predicted = torch.max(outputs.data, 1)
         train_total += targets.size(0)
         if len(targets.shape) == 2:
             targets = torch.argmax(targets, axis=1)
@@ -491,73 +380,57 @@ for epoch in range(start_epoch, args.nepoch):
 
         with warmup_scheduler.dampening():
             scheduler.step()
+
     train_acc = 100.0 * float(train_correct) / train_total
     train_loss = train_loss / (idx + 1)
-    print(
-        "Train | lr: {:.4f} | Loss: {:.4f} | Acc: {:.3f}% ({}/{})".format(
-            lr_now, train_loss, train_acc, train_correct, train_total
-        )
-    )
+    print(f"Train | lr: {lr_now:.4f} | Loss: {train_loss:.4f} | Acc: {train_acc:.3f}% ({train_correct}/{train_total})")
 
-    ##### Evaluating model with test data every epoch
+    ##### Evaluation every 4 epochs
     if epoch % 4 == 0:
+        net.eval()
+        eval_correct = 0
+        eval_total = 0
         with torch.no_grad():
-            net.eval()  # set model to eval mode, disable Batch Normalization and Dropout
-            eval_correct = eval_total = 0
-            for _, (batch) in enumerate(tqdm(eval_loader, ncols=80)):
-
-                inputs = batch["pixel_values"].cuda()
-                targets = batch["labels"].cuda()
-
-                x = net(inputs)
-                _, predicted = torch.max(x.data, 1)
+            for _, batch in enumerate(tqdm(eval_loader, ncols=80)):
+                inputs = batch["pixel_values"].to(device)
+                targets = batch["labels"].to(device)
+                outputs = net(inputs)
+                _, predicted = torch.max(outputs.data, 1)
                 eval_total += targets.size(0)
                 if len(targets.shape) == 2:
                     targets = torch.argmax(targets, axis=1)
                 eval_correct += predicted.eq(targets.data).cpu().sum()
-            eval_acc = 100.0 * float(eval_correct) / eval_total
-            print(
-                "Test | Acc: {:.3f}% ({}/{})".format(eval_acc, eval_correct, eval_total)
-            )
+        eval_acc = 100.0 * float(eval_correct) / eval_total
+        print(f"Test | Acc: {eval_acc:.3f}% ({eval_correct}/{eval_total})")
 
-            # Store check point
-            train_losses.append(train_loss)
-            val_losses.append(eval_acc)
-            train_accuracies.append(train_acc)
-            val_accuracies.append(eval_acc)
+        # Save metrics
+        train_losses.append(train_loss)
+        val_losses.append(eval_acc)
+        train_accuracies.append(train_acc)
+        val_accuracies.append(eval_acc)
 
-            if eval_acc > best_accuracy:
-                best_accuracy = eval_acc
-                print(f"New best accuracy: {best_accuracy:.2f}%")
+        if eval_acc > best_accuracy:
+            best_accuracy = eval_acc
+            print(f"New best accuracy: {best_accuracy:.2f}%")
 
-            metrics = {
-                "train_losses": train_losses,
-                "val_losses": val_losses,
-                "train_accuracies": train_accuracies,
-                "val_accuracies": val_accuracies,
-                "best_accuracy": best_accuracy
-            }
+        metrics = {
+            "train_losses": train_losses,
+            "val_losses": val_losses,
+            "train_accuracies": train_accuracies,
+            "val_accuracies": val_accuracies,
+            "best_accuracy": best_accuracy
+        }
 
-            save_metrics_to_json(metrics, metrics_path)
-            save_checkpoint(net, optimizer, epoch, metrics, checkpoint_path)
+        save_metrics_to_json(metrics, metrics_path)
+        save_checkpoint(net, optimizer, epoch, metrics, checkpoint_path)
 
-            ##### Logging
-            with open(
-                os.path.join(exp_dir, "train_log.csv"), "a+", encoding="utf-8"
-            ) as file:
-                file.write(
-                    "{}, {:.4f}, {:.4f}, {:.3f}%, {:.3f}%\n".format(
-                        epoch, lr_now, train_loss, train_acc, eval_acc
-                    )
-                )
-            ##### save model with highest acc
-            if eval_acc > max_eval_acc:
-                max_eval_acc = eval_acc
-                torch.save(
-                    net.state_dict(),
-                    os.path.join(exp_dir, "max_acc.pth"),
-                    _use_new_zipfile_serialization=False,
-                )
+        with open(os.path.join(exp_dir, "train_log.csv"), "a+", encoding="utf-8") as file:
+            file.write(f"{epoch}, {lr_now:.4f}, {train_loss:.4f}, {train_acc:.3f}%, {eval_acc:.3f}%\n")
+
+        # Save best model
+        if eval_acc > max_eval_acc:
+            max_eval_acc = eval_acc
+            torch.save(net.state_dict(), os.path.join(exp_dir, "max_acc.pth"), _use_new_zipfile_serialization=False)
 
 
 ########################
@@ -568,34 +441,28 @@ print("\n\n===== TESTING =====")
 with open(os.path.join(exp_dir, "train_log.csv"), "a") as file:
     file.write("===== TESTING =====\n")
 
-##### load best model
-net.load_state_dict(torch.load(join(exp_dir, "max_acc.pth")))
-net.eval()  # set model to eval mode, disable Batch Normalization and Dropout
+net.load_state_dict(torch.load(join(exp_dir, "max_acc.pth"), map_location=device))
+net.eval()
 
 for data_set, testloader in zip(["train", "eval"], [train_loader, eval_loader]):
-    test_loss = correct = total = 0
+    test_correct = 0
+    test_total = 0
     with torch.no_grad():
-        for _, (batch) in enumerate(tqdm(testloader, ncols=80)):
-            inputs = batch["pixel_values"].cuda()
-            targets = batch["labels"].cuda()
-            inputs, targets = inputs.cuda(), targets.cuda()
+        for _, batch in enumerate(tqdm(testloader, ncols=80)):
+            inputs = batch["pixel_values"].to(device)
+            targets = batch["labels"].to(device)
             if len(targets.shape) == 2:
                 targets = torch.argmax(targets, axis=1)
-            x = net(inputs)
-            _, predicted = torch.max(x.data, 1)
-            total += targets.size(0)
-            correct += predicted.eq(targets.data).cpu().sum()
-    test_acc = 100.0 * float(correct) / total
-    print("Dataset {}\tACC:{:.2f}\n".format(data_set, test_acc))
+            outputs = net(inputs)
+            _, predicted = torch.max(outputs.data, 1)
+            test_total += targets.size(0)
+            test_correct += predicted.eq(targets.data).cpu().sum()
+    test_acc = 100.0 * float(test_correct) / test_total
+    print(f"Dataset {data_set}\tACC:{test_acc:.2f}%")
 
-    ##### logging
     with open(os.path.join(exp_dir, "train_log.csv"), "a+", encoding="utf-8") as file:
-        file.write("Dataset {}\tACC:{:.2f}\n".format(data_set, test_acc))
+        file.write(f"Dataset {data_set}\tACC:{test_acc:.2f}\n")
 
-    with open(
-        os.path.join(exp_dir, "acc_{}_{:.2f}".format(data_set, test_acc)),
-        "a+",
-        encoding="utf-8",
-    ) as file:
-        # save accuracy as file name
+    with open(os.path.join(exp_dir, f"acc_{data_set}_{test_acc:.2f}"), "a+", encoding="utf-8") as file:
+        # save accuracy as file name (empty)
         pass
