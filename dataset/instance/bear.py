@@ -12,7 +12,7 @@ from dataset.base import HugFewShotDataset
 from dataset.template import IMAGENET_TEMPLATES_TINY
 
 HUG_LOCAL_IMAGE_TRAIN_DIR = "/content/drive/MyDrive/RareAnimal/Bear/diffmix"
-
+HUG_LOCAL_IMAGE_TEST_DIR = "/content/drive/MyDrive/RareAnimal/Bear/test_diffmix"
 
 class BearHugDataset(HugFewShotDataset):
     super_class_name = "bear"
@@ -45,7 +45,11 @@ class BearHugDataset(HugFewShotDataset):
             **kwargs,
         )
 
-        dataset = load_dataset("imagefolder", data_dir=image_train_dir)["train"]
+        if split == "train":
+            dataset = load_dataset(HUG_LOCAL_IMAGE_TRAIN_DIR, split="train")
+        else:
+            dataset = load_dataset(HUG_LOCAL_IMAGE_TEST_DIR, split="test")
+    
         random.seed(seed)
         np.random.seed(seed)
 

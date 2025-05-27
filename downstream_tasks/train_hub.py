@@ -302,8 +302,8 @@ else:
     scaler = None
 
 ##### Resume checkpoint
-checkpoint_path = os.path.join(google_drive_dir, f"{args.model}_checkpoint.pth")
-metrics_path = os.path.join(google_drive_dir, f"{args.model}_metrics.json")
+checkpoint_path = os.path.join(google_drive_dir, f"{args.dataset}_{args.model}_checkpoint.pth")
+metrics_path = os.path.join(google_drive_dir, f"{args.dataset}_{args.model}_metrics.json")
 
 start_epoch = 0
 train_losses, val_losses = [], []
