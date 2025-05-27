@@ -155,7 +155,6 @@ args = parser.parse_args()
 
 ##### exp setting
 
-
 if args.optimizer == "sgd":
     base_lr = 0.02
 elif args.optimizer == "adamw":
@@ -174,6 +173,8 @@ elif args.res_mode == "224":
         args.batch_size = 256
     elif args.model == "vit_b_16":
         args.batch_size = 128
+    elif args.model == "resnet18":
+        args.batch_size = 256  # Add batch size for resnet18 in 224 resolution
     else:
         raise ValueError("model not supported")
 elif args.res_mode == "384":
@@ -183,6 +184,8 @@ elif args.res_mode == "384":
         args.batch_size = 128
     elif args.model == "vit_b_16":
         args.batch_size = 32
+    elif args.model == "resnet18":
+        args.batch_size = 128  # Add batch size for resnet18 in 384 resolution
     else:
         raise ValueError("model not supported")
 elif args.res_mode == "448":
@@ -192,6 +195,8 @@ elif args.res_mode == "448":
         args.batch_size = 64
     elif args.model == "vit_b_16":
         args.batch_size = 32
+    elif args.model == "resnet18":
+        args.batch_size = 64  # Add batch size for resnet18 in 448 resolution
     else:
         raise ValueError("model not supported")
 else:
