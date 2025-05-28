@@ -50,7 +50,7 @@ class TurtleHugDataset(HugFewShotDataset):
         if split == "train":
             dataset = load_dataset(image_train_dir, split="train")
         else:
-            dataset = load_dataset(image_test_dir)
+            dataset = load_dataset(image_test_dir, split="train")
 
         random.seed(seed)
         np.random.seed(seed)
