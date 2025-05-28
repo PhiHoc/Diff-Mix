@@ -45,7 +45,7 @@ class TurtleHugDataset(HugFewShotDataset):
             **kwargs,
         )
 
-         if split == "train":
+        if split == "train":
             dataset = load_dataset("imagefolder",data_dir=HUG_LOCAL_IMAGE_TRAIN_DIR)["train"]
         else:
             dataset = load_dataset("imagefolder",data_dir=HUG_LOCAL_IMAGE_TEST_DIR)["test"]
