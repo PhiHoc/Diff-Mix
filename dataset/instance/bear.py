@@ -23,6 +23,7 @@ class BearHugDataset(HugFewShotDataset):
         split: str = "train",
         seed: int = 0,
         image_train_dir: str = HUG_LOCAL_IMAGE_TRAIN_DIR,
+        image_test_dir: str = HUG_LOCAL_IMAGE_TEST_DIR,
         examples_per_class: int = -1,
         synthetic_probability: float = 0.5,
         return_onehot: bool = False,
@@ -46,9 +47,9 @@ class BearHugDataset(HugFewShotDataset):
         )
 
         if split == "train":
-            dataset = load_dataset("imagefolder",data_dir=HUG_LOCAL_IMAGE_TRAIN_DIR)["train"]
+            dataset = load_dataset(image_train_dir, split="train")
         else:
-            dataset = load_dataset("imagefolder",data_dir=HUG_LOCAL_IMAGE_TEST_DIR)["test"]
+            dataset = load_dataset(image_test_dir, split="test")
     
         random.seed(seed)
         np.random.seed(seed)
