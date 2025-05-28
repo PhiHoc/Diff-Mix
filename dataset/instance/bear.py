@@ -46,9 +46,9 @@ class BearHugDataset(HugFewShotDataset):
         )
 
         if split == "train":
-            dataset = load_dataset(HUG_LOCAL_IMAGE_TRAIN_DIR, split="train")
+            dataset = load_dataset("imagefolder",data_dir=HUG_LOCAL_IMAGE_TRAIN_DIR)["train"]
         else:
-            dataset = load_dataset(HUG_LOCAL_IMAGE_TEST_DIR, split="test")
+            dataset = load_dataset("imagefolder",data_dir=HUG_LOCAL_IMAGE_TEST_DIR)["test"]
     
         random.seed(seed)
         np.random.seed(seed)
