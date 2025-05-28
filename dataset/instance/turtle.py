@@ -1,7 +1,7 @@
 import random
 from collections import defaultdict
 from typing import Tuple
-
+import os
 import numpy as np
 import torch
 import torchvision.transforms as transforms
@@ -46,6 +46,11 @@ class TurtleHugDataset(HugFewShotDataset):
             **kwargs,
         )
 
+        
+        if os.path.exists(image_train_dir):
+            print("Path exists:", image_train_dir)
+        else:
+            print("Path does not exist:", image_train_dir)
         if split == "train":
             dataset = load_dataset(image_train_dir, split="train")
         else:
