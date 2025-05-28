@@ -47,14 +47,10 @@ class TurtleHugDataset(HugFewShotDataset):
         )
 
         
-        if os.path.exists(image_train_dir):
-            print("Path exists:", image_train_dir)
-        else:
-            print("Path does not exist:", image_train_dir)
         if split == "train":
             dataset = load_dataset(image_train_dir, split="train")
         else:
-            dataset = load_dataset(image_test_dir, split="test")
+            dataset = load_dataset(image_test_dir)
 
         random.seed(seed)
         np.random.seed(seed)
