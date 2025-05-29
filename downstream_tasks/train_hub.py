@@ -385,8 +385,8 @@ for epoch in range(start_epoch, args.nepoch):
     train_loss = train_loss / (idx + 1)
     print(f"Train | lr: {lr_now:.4f} | Loss: {train_loss:.4f} | Acc: {train_acc:.3f}% ({train_correct}/{train_total})")
 
-    ##### Evaluation every 4 epochs
-    if epoch % 4 == 0:
+    ##### Evaluation every epochs
+    if epoch % 1 == 0:
         net.eval()
         eval_correct = 0
         eval_total = 0
