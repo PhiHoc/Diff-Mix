@@ -10,7 +10,7 @@ from augmentation.base_augmentation import GenerativeMixup
 from diffusers import (
     DPMSolverMultistepScheduler,
     StableDiffusionImg2ImgPipeline,
-    StableDiffusionPipeline,
+    StableDiffusionPipeline, AutoPipelineForImage2Image, LCMScheduler,
 )
 from diffusers.utils import logging
 
@@ -83,7 +83,7 @@ class DreamboothLoraMixup(GenerativeMixup):
         embed_path: str = None,
         prompt: str = "a photo of a {name}",
         format_name: Callable = format_name,
-        guidance_scale: float = 7.5,
+        guidance_scale: float = 1.5,
         disable_safety_checker: bool = True,
         revision: str = None,
         device="cuda",
@@ -94,18 +94,14 @@ class DreamboothLoraMixup(GenerativeMixup):
 
         if DreamboothLoraMixup.pipe is None:
 
-            PipelineClass = StableDiffusionImg2ImgPipeline
-
-            DreamboothLoraMixup.pipe = PipelineClass.from_pretrained(
+            DreamboothLoraMixup.pipe = AutoPipelineForImage2Image.from_pretrained(
                 model_path,
-                use_auth_token=True,
-                revision=revision,
-                local_files_only=False,
                 torch_dtype=torch.float16,
+                variant="fp16",
             ).to(device)
 
-            scheduler = DPMSolverMultistepScheduler.from_config(
-                DreamboothLoraMixup.pipe.scheduler.config, local_files_only=False
+            DreamboothLoraMixup.pipe.scheduler = LCMScheduler.from_config(
+                DreamboothLoraMixup.pipe.scheduler.config
             )
             self.placeholder2name = {}
             self.name2placeholder = {}
@@ -115,9 +111,14 @@ class DreamboothLoraMixup(GenerativeMixup):
                     DreamboothLoraMixup.pipe.text_encoder,
                     DreamboothLoraMixup.pipe.tokenizer,
                 )
+
+            #Load both lora weight
             if lora_path is not None:
                 DreamboothLoraMixup.pipe.load_lora_weights(lora_path)
-            DreamboothLoraMixup.pipe.scheduler = scheduler
+                print(f"Successfully loaded fine-tuned LoRA from {lora_path}")
+
+            DreamboothLoraMixup.pipe.load_lora_weights("latent-consistency/lcm-lora-sdv1-5")
+            print("Successfully loaded LCM-LoRA for speed-up.")
 
             print(f"successfuly load lora weights from {lora_path}! ! ! ")
 
@@ -156,7 +157,7 @@ class DreamboothLoraMixup(GenerativeMixup):
             prompt=[prompt],
             strength=strength,
             guidance_scale=self.guidance_scale,
-            num_inference_steps=25,
+            num_inference_steps=4,
             num_images_per_prompt=len(canvas),
         )
 
