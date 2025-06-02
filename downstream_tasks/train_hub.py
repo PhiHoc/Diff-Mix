@@ -388,20 +388,31 @@ for epoch in range(start_epoch, args.nepoch):
     ##### Evaluation every epochs
     if epoch % 1 == 0:
         net.eval()
+        eval_loss = 0.0
         eval_correct = 0
         eval_total = 0
+        eval_idx = 0
         with torch.no_grad():
-            for _, batch in enumerate(tqdm(eval_loader, ncols=80)):
+            for batch_idx, batch in enumerate(tqdm(eval_loader, ncols=80)):
+                eval_idx = batch_idx
                 inputs = batch["pixel_values"].to(device)
                 targets = batch["labels"].to(device)
                 outputs = net(inputs)
+
+                # Calculate validation loss
+                loss = criterion(outputs, targets)
+                eval_loss += loss.item()
+
+                # Calculate validation accuracy
                 _, predicted = torch.max(outputs.data, 1)
                 eval_total += targets.size(0)
                 if len(targets.shape) == 2:
                     targets = torch.argmax(targets, axis=1)
                 eval_correct += predicted.eq(targets.data).cpu().sum()
+
         eval_acc = 100.0 * float(eval_correct) / eval_total
-        print(f"Test | Acc: {eval_acc:.3f}% ({eval_correct}/{eval_total})")
+        eval_loss = eval_loss / (eval_idx + 1)
+        print(f"Test  | Loss: {eval_loss:.4f} | Acc: {eval_acc:.3f}% ({eval_correct}/{eval_total})")
 
         # Save metrics
         train_losses.append(train_loss)
