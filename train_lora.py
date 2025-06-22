@@ -567,12 +567,19 @@ def main():
         revision=args.revision,
         local_files_only=args.local_files_only,
     )
+
+    # SwiftBrush
+    # [50 - 100 - 300 - 400 - 500]
+    # batch 10 images -> train binary classifier -> (high confidence -> yes / no) -> guide diffusion -> train low confidence imgs
+    # (Increase diversity)
+    # Classifier-guided diffusion model
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="unet",
         revision=args.revision,
         local_files_only=args.local_files_only,
     )
+
     # freeze parameters of models to save more memory
     unet.requires_grad_(False)
     vae.requires_grad_(False)

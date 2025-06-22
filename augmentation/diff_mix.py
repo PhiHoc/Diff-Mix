@@ -210,6 +210,7 @@ class DreamboothLoraGeneration(GenerativeMixup):
             scheduler = DPMSolverMultistepScheduler.from_config(
                 DreamboothLoraGeneration.pipe.scheduler.config, local_files_only=False
             )
+
             self.placeholder2name = None
             self.name2placeholder = None
             if embed_path is not None:
