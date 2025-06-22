@@ -602,6 +602,7 @@ def main():
         if args.task == "imbalanced":
             train_dataset = T2I_IMBALANCE_DATASET_NAME_MAPPING[args.dataset_name](
                 seed=args.seed,
+                train_data_dir=args.train_data_dir,
                 max_train_samples=args.max_train_samples,
                 center_crop=args.center_crop,
                 resolution=args.resolution,
@@ -612,6 +613,7 @@ def main():
         else:
             train_dataset = T2I_DATASET_NAME_MAPPING[args.dataset_name](
                 seed=args.seed,
+                train_data_dir=args.train_data_dir,
                 max_train_samples=args.max_train_samples,
                 center_crop=args.center_crop,
                 resolution=args.resolution,
