@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 import random
 import shutil
@@ -9,20 +10,22 @@ import numpy as np
 import torch
 import torch.nn as nn
 import yaml
-from torch.utils.data import DataLoader
+from PIL.Image import Image
 from torchvision.models import ViT_B_16_Weights, resnet18, resnet50, vit_b_16
 from tqdm import tqdm
+
+from dataset.base import SyntheticDataset
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../"))
 
 from dataset import DATASET_NAME_MAPPING
 from downstream_tasks.losses import LabelSmoothingLoss
 from downstream_tasks.mixup import CutMix, mixup_data
-from utils.misc import checked_has_run
 from utils.network import freeze_model
 import json
 import pytorch_warmup
 from torch.cuda.amp import GradScaler, autocast
+from torch.utils.data import DataLoader, ConcatDataset
 
 #######################
 ##### 1 - Setting #####
@@ -85,8 +88,26 @@ parser.add_argument("-mp", "--mixup_probability", type=float, default=0.5)
 parser.add_argument("-ne", "--nepoch", type=int, default=448)
 parser.add_argument("--optimizer", type=str, default="sgd")
 parser.add_argument("-fs", "--finetune_strategy", type=str, default=None)
-args = parser.parse_args()
+parser.add_argument("--train_data_dir", type=str, default=None, help="Path to the original training data folder.")
+parser.add_argument("--test_data_dir", type=str, default=None, help="Path to the original testing data folder.")
+parser.add_argument("--output_root", type=str, default="outputs/result", help="The root directory for all experiment results.")
+parser.add_argument("--soft_scaler", type=float, default=1.0, help="Scaling factor for soft labels.")
 
+parser.add_argument(
+    "--data_mode",
+    type=str,
+    default="probabilistic",
+    choices=["probabilistic", "concat"],
+    help="Strategy: 'probabilistic' using syndata_p, 'concat' using combine datasets."
+)
+
+args = parser.parse_args()
+run_name = f"{args.dataset}{formate_note(args)}"
+exp_dir = os.path.join(args.output_root, args.group_note, run_name)
+
+if not os.path.exists(exp_dir):
+    os.makedirs(exp_dir)
+print(f"Thí nghiệm sẽ được lưu tại: {exp_dir}")
 
 ##### exp setting
 if args.optimizer == "sgd":
@@ -145,10 +166,6 @@ lr_begin = args.lr
 seed = int(args.seed)
 datasets_name = args.dataset
 num_workers = args.num_workers
-google_drive_dir = "/content/drive/MyDrive/RareAnimal/training_logs"
-exp_dir = "outputs/result/{}/{}{}".format(
-    args.group_note, datasets_name, formate_note(args)
-)
 
 ##### CUDA device setting
 # Use device from torch.device
@@ -165,6 +182,7 @@ torch.cuda.manual_seed_all(seed)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
+# tôi đang muốn sample 1 lượt 500 ảnh mỗi class --syn_dataset_mulitiplier=5, mỗi class tôi có sẵn 100 ảnh, không phải sample nhiều lần. nhưng quá trình train_hub, tôi muốn lần lượt
 
 ##### Dataloader setting
 re_size = args.resize
@@ -187,7 +205,131 @@ def to_tensor(x):
     else:
         raise NotImplementedError
 
-def collate_fn(examples):
+
+if args.data_mode == 'probabilistic':
+    print("===== Chế độ tải dữ liệu: Probabilistic (Mặc định) =====")
+
+    # Chế độ này hoạt động như code gốc
+
+    def collate_fn(examples):
+        pixel_values = torch.stack([example["pixel_values"] for example in examples])
+        labels = torch.stack([to_tensor(example["label"]) for example in examples])
+        dtype = torch.float32 if len(labels.size()) == 2 else torch.long
+        labels = labels.to(dtype=dtype)
+        return {"pixel_values": pixel_values, "labels": labels}
+
+
+    train_set = DATASET_NAME_MAPPING[datasets_name](
+        split="train",
+        image_size=re_size,
+        crop_size=crop_size,
+        synthetic_dir=synthetic_dir,
+        synthetic_probability=synthetic_probability,
+        return_onehot=return_onehot,
+        gamma=gamma,
+        examples_per_class=examples_per_class,
+        image_train_dir=args.train_data_dir,
+        image_test_dir=args.test_data_dir,
+    )
+    nb_class = train_set.num_classes
+
+elif args.data_mode == 'concat':
+    print("===== Chế độ tải dữ liệu: Concatenate (Tái sử dụng base.py) =====")
+
+    # 1. Tải bộ dữ liệu gốc với HARD LABEL (dùng HugFewShotDataset)
+    original_train_set = DATASET_NAME_MAPPING[datasets_name](
+        split="train",
+        image_size=re_size,
+        crop_size=crop_size,
+        return_onehot=True,
+        synthetic_dir=None,  # Tắt chế độ tổng hợp để chỉ lấy ảnh gốc
+        examples_per_class=examples_per_class,
+        image_train_dir=args.train_data_dir,
+        image_test_dir=args.test_data_dir,
+    )
+    nb_class = original_train_set.num_classes
+
+
+    # 2. Định nghĩa lớp Dataset cho dữ liệu tổng hợp bằng cách KẾ THỪA từ SyntheticDataset
+    class SyntheticSoftLabelDataset(SyntheticDataset):
+        # Lớp này kế thừa toàn bộ logic đọc file và __len__ từ SyntheticDataset
+
+        def __init__(self, *args, **kwargs):
+            # Lưu lại các tham số cần cho soft label
+            self.gamma = kwargs.pop('gamma', 1.0)
+            self.soft_scaler = kwargs.pop('soft_scaler', 1.0)
+            # Gọi hàm khởi tạo của lớp cha (SyntheticDataset)
+            super().__init__(*args, **kwargs)
+
+        def __getitem__(self, idx: int) -> dict:
+            # Lấy dữ liệu thô từ lớp cha (ảnh và nhãn integer)
+            path, src_label, tar_label = self.get_syn_item_raw(idx)
+            image = Image.open(path).convert("RGB")
+
+            # Đọc strength từ dataframe
+            df_data = self.meta_df.iloc[idx]
+            strength = df_data["Strength"]
+
+            # Tính toán SOFT LABEL - logic tương tự HugFewShotDataset
+            soft_label = torch.zeros(self.num_classes)
+            soft_label[src_label] += self.soft_scaler * (1 - math.pow(strength, self.gamma))
+            soft_label[tar_label] += self.soft_scaler * math.pow(strength, self.gamma)
+
+            return {"pixel_values": self.transform(image), "label": soft_label}
+
+
+    datasets_to_concat = [original_train_set]
+    if synthetic_dir:
+        synthetic_soft_label_set = SyntheticSoftLabelDataset(
+            synthetic_dir=synthetic_dir,
+            class2label=original_train_set.class2label,
+            gamma=gamma,
+            soft_scaler=args.soft_scaler if hasattr(args, 'soft_scaler') else 1.0,
+            image_size=re_size,
+            crop_size=crop_size
+        )
+        datasets_to_concat.append(synthetic_soft_label_set)
+
+    # 3. Gộp các bộ dữ liệu lại
+    train_set = ConcatDataset(datasets_to_concat)
+    print(f"Tổng số ảnh trong bộ train sau khi gộp: {len(train_set)}")
+
+
+    # 4. Collate function (cả hai dataset giờ đều trả về tensor label)
+    def collate_fn(examples):
+        pixel_values = torch.stack([example["pixel_values"] for example in examples])
+        labels = torch.stack([example["label"] for example in examples])
+        return {"pixel_values": pixel_values, "labels": labels}
+
+# Luôn cần định nghĩa test_set
+test_set = DATASET_NAME_MAPPING[datasets_name](
+    split="val", image_size=re_size, crop_size=crop_size, return_onehot=return_onehot,
+    image_train_dir=args.train_data_dir,
+    image_test_dir=args.test_data_dir
+)
+
+batch_size = min(args.batch_size, len(train_set))
+
+# Logic CutMix nên được áp dụng sau khi đã có train_set cuối cùng
+if args.use_cutmix:
+    if args.data_mode == 'concat':
+        print("Lưu ý: CutMix đang được áp dụng trên bộ dữ liệu đã gộp.")
+    train_set = CutMix(
+        train_set, num_class=nb_class, prob=args.mixup_probability
+    )
+
+# Tạo DataLoader từ train_set đã được xác định ở trên
+train_loader = DataLoader(
+    train_set,
+    batch_size=batch_size,
+    shuffle=True,
+    collate_fn=collate_fn,  # Dùng collate_fn tương ứng với mode
+    num_workers=num_workers,
+)
+
+
+# Collate_fn cho eval loader (cần one-hot nếu loss function yêu cầu)
+def eval_collate_fn(examples):
     pixel_values = torch.stack([example["pixel_values"] for example in examples])
     labels = torch.stack([to_tensor(example["label"]) for example in examples])
     dtype = torch.float32 if len(labels.size()) == 2 else torch.long
@@ -195,39 +337,11 @@ def collate_fn(examples):
     return {"pixel_values": pixel_values, "labels": labels}
 
 
-train_set = DATASET_NAME_MAPPING[datasets_name](
-    split="train",
-    image_size=re_size,
-    crop_size=crop_size,
-    synthetic_dir=synthetic_dir,
-    synthetic_probability=synthetic_probability,
-    return_onehot=return_onehot,
-    gamma=gamma,
-    examples_per_class=examples_per_class,
-)
-test_set = DATASET_NAME_MAPPING[datasets_name](
-    split="val", image_size=re_size, crop_size=crop_size, return_onehot=return_onehot
-)
-
-batch_size = min(args.batch_size, len(train_set))
-nb_class = train_set.num_classes
-if args.use_cutmix:
-    train_set = CutMix(
-        train_set, num_class=train_set.num_classes, prob=args.mixup_probability
-    )
-
-train_loader = DataLoader(
-    train_set,
-    batch_size=batch_size,
-    shuffle=True,
-    collate_fn=collate_fn,
-    num_workers=num_workers,
-)
 eval_loader = DataLoader(
     test_set,
     batch_size=batch_size,
     shuffle=False,
-    collate_fn=collate_fn,
+    collate_fn=eval_collate_fn,
     num_workers=num_workers,
 )
 
@@ -302,8 +416,8 @@ else:
     scaler = None
 
 ##### Resume checkpoint
-checkpoint_path = os.path.join(google_drive_dir, f"{args.dataset}_{args.model}_checkpoint.pth")
-metrics_path = os.path.join(google_drive_dir, f"{args.dataset}_{args.model}_metrics.json")
+checkpoint_path = os.path.join(exp_dir, "checkpoint.pth")
+metrics_path = os.path.join(exp_dir, "metrics.json")
 
 start_epoch = 0
 train_losses, val_losses = [], []
