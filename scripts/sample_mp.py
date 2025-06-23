@@ -262,56 +262,57 @@ def main(args):
             image_test_dir=args.test_data_dir, 
         )
 
+    for name in train_dataset.class_names:
+        name = name.replace(" ", "_").replace("/", "_")
+        os.makedirs(os.path.join(args.output_path, "data", name), exist_ok=True)
+
     num_classes = len(train_dataset.class_names)
 
+    # --- BẮT ĐẦU KHỐI IF/ELSE ĐÃ ĐƯỢC SỬA LẠI ---
+
     if args.target_source_class:
-        # Chế độ sinh bổ sung cho một lớp cụ thể
+        # --- CHẾ ĐỘ 1: SINH BỔ SUNG CHO MỘT LỚP CỤ THỂ ---
         print(f"Running in targeted sampling mode for source class: {args.target_source_class}")
         if not args.num_samples:
             raise ValueError("--num_samples must be provided when using --target_source_class")
 
         num_tasks = args.num_samples
-        # Tìm class_id từ tên lớp
+
+        # Tìm class_id từ tên lớp mà người dùng cung cấp
         class_name_to_id = {name: i for i, name in enumerate(train_dataset.class_names)}
-        source_class_id = class_name_to_id.get(args.target_source_class.replace("_", " "))
+        # Thay thế "_" bằng " " để khớp với tên lớp trong dataset
+        source_class_name = args.target_source_class.replace("_", " ")
+        source_class_id = class_name_to_id.get(source_class_name)
 
         if source_class_id is None:
-            raise ValueError(f"Class name '{args.target_source_class}' not found.")
+            raise ValueError(f"Class name '{source_class_name}' not found in dataset.")
 
-        # Tất cả các tác vụ đều có cùng một lớp nguồn
+        # Tạo danh sách tác vụ: tất cả đều có cùng một lớp nguồn
         source_classes = [source_class_id] * num_tasks
-        # Lớp đích vẫn chọn ngẫu nhiên để có sự đa dạng
+        # Lớp đích vẫn chọn ngẫu nhiên để có sự đa dạng về nội dung
         target_classes = random.choices(range(num_classes), k=num_tasks)
 
     else:
-        # Chế độ sinh hàng loạt đã cân bằng (logic bạn đã sửa)
+        # --- CHẾ ĐỘ 2: SINH HÀNG LOẠT ĐÃ CÂN BẰNG ---
+        print("Running in balanced batch generation mode.")
         num_tasks = args.syn_dataset_mulitiplier * len(train_dataset)
-        samples_per_class = num_tasks
 
-    for name in train_dataset.class_names:
-        name = name.replace(" ", "_").replace("/", "_")
-        os.makedirs(os.path.join(args.output_path, "data", name), exist_ok=True)
+        # Tính toán số lượng mẫu cân bằng cho mỗi lớp
+        samples_per_class = num_tasks // num_classes
+        remainder = num_tasks % num_classes
 
-    num_tasks = args.syn_dataset_mulitiplier * len(train_dataset)
+        # Tạo một danh sách lớp cơ sở đã được cân bằng
+        base_class_list = []
+        for i in range(num_classes):
+            base_class_list.extend([i] * samples_per_class)
+        # Phân bổ phần dư cho các lớp đầu tiên để đảm bảo đủ num_tasks
+        if remainder > 0:
+            base_class_list.extend(range(remainder))
 
-    samples_per_class = num_tasks // num_classes
-    remainder = num_tasks % num_classes
-
-    # Tạo một danh sách lớp cơ sở đã được cân bằng
-    base_class_list = []
-    for i in range(num_classes):
-        base_class_list.extend([i] * samples_per_class)
-    # Phân bổ phần dư cho các lớp đầu tiên để đảm bảo đủ num_tasks
-    if remainder > 0:
-        base_class_list.extend(range(remainder))
-
-    # Tạo danh sách lớp nguồn và lớp đích từ danh sách cơ sở
-    source_classes = list(base_class_list)
-    target_classes = list(base_class_list)
-
-    # Xáo trộn cả hai danh sách một cách độc lập để tạo ra các cặp ngẫu nhiên
-    random.shuffle(source_classes)
-    random.shuffle(target_classes)
+        # Tạo danh sách lớp nguồn và đích từ danh sách cơ sở
+        # Cả hai danh sách này đều được cân bằng
+        source_classes = list(base_class_list)
+        target_classes = list(base_class_list)
 
     # Đối với các chiến lược không phải mixup, lớp nguồn và đích phải giống nhau
     if args.sample_strategy in ["real-gen", "real-aug", "diff-aug", "diff-gen", "ti-aug"]:
