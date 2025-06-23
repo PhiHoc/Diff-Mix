@@ -249,6 +249,8 @@ def main(args):
             seed=args.seed,
             resolution=args.resolution,
             imbalance_factor=args.imbalance_factor,
+            image_train_dir=args.train_data_dir,
+            image_test_dir=args.test_data_dir, 
         )
     else:
         train_dataset = DATASET_NAME_MAPPING[args.dataset](
@@ -256,6 +258,8 @@ def main(args):
             seed=args.seed,
             examples_per_class=args.examples_per_class,
             resolution=args.resolution,
+            image_train_dir=args.train_data_dir,
+            image_test_dir=args.test_data_dir, 
         )
 
     num_classes = len(train_dataset.class_names)
