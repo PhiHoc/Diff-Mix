@@ -262,64 +262,34 @@ def main(args):
             image_test_dir=args.test_data_dir, 
         )
 
+    num_classes = len(train_dataset.class_names)
+
     for name in train_dataset.class_names:
         name = name.replace(" ", "_").replace("/", "_")
         os.makedirs(os.path.join(args.output_path, "data", name), exist_ok=True)
 
     num_classes = len(train_dataset.class_names)
+    num_tasks = args.syn_dataset_mulitiplier * len(train_dataset)
 
-    # --- BẮT ĐẦU KHỐI IF/ELSE ĐÃ ĐƯỢC SỬA LẠI ---
+    # 1. Tạo danh sách LỚP ĐÍCH (target_classes) một cách cân bằng
+    samples_per_class = num_tasks // num_classes
+    target_classes = []
+    for i in range(num_classes):
+        target_classes.extend([i] * samples_per_class)
 
-    if args.target_source_class:
-        # --- CHẾ ĐỘ 1: SINH BỔ SUNG CHO MỘT LỚP CỤ THỂ ---
-        print(f"Running in targeted sampling mode for source class: {args.target_source_class}")
-        if not args.num_samples:
-            raise ValueError("--num_samples must be provided when using --target_source_class")
+    # Xử lý phần dư nếu num_tasks không chia hết cho num_classes
+    remainder = num_tasks % num_classes
+    if remainder > 0:
+        target_classes.extend(random.sample(range(num_classes), remainder))
 
-        num_tasks = args.num_samples
+    # Xáo trộn danh sách lớp đích để đảm bảo tính ngẫu nhiên trong quá trình xử lý
+    random.shuffle(target_classes)
 
-        # Tìm class_id từ tên lớp mà người dùng cung cấp
-        class_name_to_id = {name: i for i, name in enumerate(train_dataset.class_names)}
-        # Thay thế "_" bằng " " để khớp với tên lớp trong dataset
-        source_class_name = args.target_source_class.replace("_", " ")
-        source_class_id = class_name_to_id.get(source_class_name)
-
-        if source_class_id is None:
-            raise ValueError(f"Class name '{source_class_name}' not found in dataset.")
-
-        # Tạo danh sách tác vụ: tất cả đều có cùng một lớp nguồn
-        source_classes = [source_class_id] * num_tasks
-        # Lớp đích vẫn chọn ngẫu nhiên để có sự đa dạng về nội dung
-        target_classes = random.choices(range(num_classes), k=num_tasks)
-
-    else:
-        # --- CHẾ ĐỘ 2: SINH HÀNG LOẠT ĐÃ CÂN BẰNG ---
-        print("Running in balanced batch generation mode.")
-        num_tasks = args.syn_dataset_mulitiplier * len(train_dataset)
-
-        # Tính toán số lượng mẫu cân bằng cho mỗi lớp
-        samples_per_class = num_tasks // num_classes
-        remainder = num_tasks % num_classes
-
-        # Tạo một danh sách lớp cơ sở đã được cân bằng
-        base_class_list = []
-        for i in range(num_classes):
-            base_class_list.extend([i] * samples_per_class)
-        # Phân bổ phần dư cho các lớp đầu tiên để đảm bảo đủ num_tasks
-        if remainder > 0:
-            base_class_list.extend(range(remainder))
-
-        # Tạo danh sách lớp nguồn và đích từ danh sách cơ sở
-        # Cả hai danh sách này đều được cân bằng
-        source_classes = list(base_class_list)
-        target_classes = list(base_class_list)
-
-    # Đối với các chiến lược không phải mixup, lớp nguồn và đích phải giống nhau
+    # 2. Tạo danh sách LỚP NGUỒN (source_classes)
+    # Chúng ta vẫn muốn lớp nguồn được chọn ngẫu nhiên để tối đa hóa sự đa dạng về bối cảnh
     if args.sample_strategy in ["real-gen", "real-aug", "diff-aug", "diff-gen", "ti-aug"]:
-        target_classes = list(source_classes) # Đảm bảo nguồn và đích giống nhau sau khi xáo trộn
-        random.shuffle(target_classes) # Xáo trộn lại một lần nữa để khác với source nếu cần
+        # Đối với các chiến lược augmentation, nguồn và đích là một
         source_classes = target_classes
-
     elif args.sample_strategy in ["real-mix", "diff-mix", "ti-mix"]:
         # Đối với các chiến lược mixup, nguồn được chọn ngẫu nhiên hoàn toàn
         source_classes = random.choices(range(num_classes), k=num_tasks)
@@ -520,10 +490,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--aug_strength", type=float, default=0.5, help="augmentation strength"
     )
-
-    parser.add_argument("--target_source_class", type=str, default=None, help="If set, only generate images with this source class.")
-    parser.add_argument("--num_samples", type=int, default=None, help="Number of samples to generate. Overrides syn_dataset_mulitiplier.")
-
     args = parser.parse_args()
 
     main(args)
