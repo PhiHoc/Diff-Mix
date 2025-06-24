@@ -14,8 +14,8 @@ from PIL.Image import Image
 from torchvision.models import ViT_B_16_Weights, resnet18, resnet50, vit_b_16
 from tqdm import tqdm
 
-from ..dataset.base import SyntheticDataset
-
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from dataset.base import SyntheticDataset
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../"))
 
