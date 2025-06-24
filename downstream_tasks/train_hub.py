@@ -14,9 +14,13 @@ from PIL.Image import Image
 from torchvision.models import ViT_B_16_Weights, resnet18, resnet50, vit_b_16
 from tqdm import tqdm
 
-from ..dataset.base import SyntheticDataset
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if project_root not in sys.path:
+    sys.path.append(project_root)
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "../"))
+from dataset.base import SyntheticDataset
+
+# sys.path.append(os.path.join(os.path.dirname(__file__), "../"))
 
 from dataset import DATASET_NAME_MAPPING
 from downstream_tasks.losses import LabelSmoothingLoss
