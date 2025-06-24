@@ -10,7 +10,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import yaml
-from PIL.Image import Image
+from PIL import Image
 from torchvision.models import ViT_B_16_Weights, resnet18, resnet50, vit_b_16
 from tqdm import tqdm
 
