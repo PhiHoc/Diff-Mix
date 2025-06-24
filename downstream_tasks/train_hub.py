@@ -14,15 +14,10 @@ from PIL.Image import Image
 from torchvision.models import ViT_B_16_Weights, resnet18, resnet50, vit_b_16
 from tqdm import tqdm
 
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-if project_root not in sys.path:
-    sys.path.append(project_root)
-
-from dataset.base import SyntheticDataset
-
-# sys.path.append(os.path.join(os.path.dirname(__file__), "../"))
+sys.path.append(os.path.join(os.path.dirname(__file__), "../"))
 
 from dataset import DATASET_NAME_MAPPING
+from dataset.base import SyntheticDataset
 from downstream_tasks.losses import LabelSmoothingLoss
 from downstream_tasks.mixup import CutMix, mixup_data
 from utils.network import freeze_model

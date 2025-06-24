@@ -35,6 +35,7 @@ class SyntheticDataset(Dataset):
         self.num_syn_seeds = num_syn_seeds  # number of seeds to generate synthetic data
         self.gamma = gamma
         self.soft_scaler = soft_scaler
+        self.csv_file = "meta.csv"
         self.class_names = None
 
         self.parse_syn_data_pd(synthetic_dir)
