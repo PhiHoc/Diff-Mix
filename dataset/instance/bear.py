@@ -11,24 +11,25 @@ from PIL import Image
 from dataset.base import HugFewShotDataset
 from dataset.template import IMAGENET_TEMPLATES_TINY
 
+
 class BearHugDataset(HugFewShotDataset):
     super_class_name = "bear"
 
     def __init__(
-        self,
-        *args,
-        split: str = "train",
-        seed: int = 0,
-        image_train_dir: str = None,
-        image_test_dir: str = None,
-        examples_per_class: int = -1,
-        synthetic_probability: float = 0.5,
-        return_onehot: bool = False,
-        soft_scaler: float = 0.9,
-        synthetic_dir: str = None,
-        image_size: int = 512,
-        crop_size: int = 448,
-        **kwargs,
+            self,
+            *args,
+            split: str = "train",
+            seed: int = 0,
+            image_train_dir: str = None,
+            image_test_dir: str = None,
+            examples_per_class: int = -1,
+            synthetic_probability: float = 0.5,
+            return_onehot: bool = False,
+            soft_scaler: float = 0.9,
+            synthetic_dir: str = None,
+            image_size: int = 512,
+            crop_size: int = 448,
+            **kwargs,
     ):
         super().__init__(
             *args,
@@ -47,7 +48,7 @@ class BearHugDataset(HugFewShotDataset):
             dataset = load_dataset(image_train_dir, split="train")
         else:
             dataset = load_dataset(image_test_dir, split="train")
-    
+
         random.seed(seed)
         np.random.seed(seed)
 
@@ -97,23 +98,22 @@ class BearHugDataset(HugFewShotDataset):
 
 
 class BearHugDatasetForT2I(torch.utils.data.Dataset):
-
     super_class_name = "bear"
 
     def __init__(
-        self,
-        *args,
-        split: str = "train",
-        seed: int = 0,
-        image_train_dir: str = None,
-        max_train_samples: int = -1,
-        class_prompts_ratio: float = 0.5,
-        resolution: int = 512,
-        center_crop: bool = False,
-        random_flip: bool = False,
-        use_placeholder: bool = False,
-        examples_per_class: int = -1,
-        **kwargs,
+            self,
+            *args,
+            split: str = "train",
+            seed: int = 0,
+            image_train_dir: str = None,
+            max_train_samples: int = -1,
+            class_prompts_ratio: float = 0.5,
+            resolution: int = 512,
+            center_crop: bool = False,
+            random_flip: bool = False,
+            use_placeholder: bool = False,
+            examples_per_class: int = -1,
+            **kwargs,
     ):
 
         super().__init__()
@@ -202,8 +202,8 @@ class BearHugDatasetForT2I(torch.utils.data.Dataset):
         # randomly choose from class name or description
         if self.use_placeholder:
             content = (
-                self.name2placeholder[self.label2class[self.dataset[idx]["label"]]]
-                + f" {self.super_class_name}"
+                    self.name2placeholder[self.label2class[self.dataset[idx]["label"]]]
+                    + f" {self.super_class_name}"
             )
         else:
             content = self.label2class[self.dataset[idx]["label"]]
