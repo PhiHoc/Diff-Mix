@@ -97,6 +97,7 @@ def sample_func(args, in_queue, gpu_id, process_id, environments):
             prompt = f"a photo of a {target_placeholder}, {environment}".strip()
 
             prompts.append(prompt)
+            print(prompt)
             save_dir = os.path.join(args.output_path, "data", target_name.replace(" ", "_").replace("/", "_"))
             os.makedirs(save_dir, exist_ok=True)
             save_name = f"{target_name.replace(' ', '_').replace('/', '_')}-{index:06d}.png"
@@ -108,10 +109,6 @@ def sample_func(args, in_queue, gpu_id, process_id, environments):
             Image.fromarray(image).save(save_path)
 
 def main(args):
-    try:
-        torch.multiprocessing.set_start_method("spawn")
-    except RuntimeError:
-        pass
 
     os.makedirs(args.output_path, exist_ok=True)
 
@@ -154,6 +151,9 @@ def main(args):
     print(f"Generation complete. Images saved under: {os.path.join(args.output_path, 'data')}")
 
 if __name__ == "__main__":
+    import multiprocessing as mp
+    mp.set_start_method("spawn", force=True)
+
     parser = argparse.ArgumentParser("Diverse Environment Sampling Script for SwiftBrush")
     parser.add_argument("--base_model_path", type=str, default="stabilityai/sd-turbo")
     parser.add_argument("--swiftbrush_unet_path", type=str, required=True)
