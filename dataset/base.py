@@ -11,12 +11,10 @@ import torchvision.transforms as transforms
 from PIL import Image
 from torch.utils.data import Dataset
 
-
 def onehot(size, target):
     vec = torch.zeros(size, dtype=torch.float32)
     vec[target] = 1.0
     return vec
-
 
 class SyntheticDataset(Dataset):
     def __init__(
@@ -32,15 +30,15 @@ class SyntheticDataset(Dataset):
         super().__init__()
 
         self.synthetic_dir = synthetic_dir
-        self.num_syn_seeds = num_syn_seeds  # number of seeds to generate synthetic data
+        self.num_syn_seeds = num_syn_seeds
         self.gamma = gamma
         self.soft_scaler = soft_scaler
-        self.csv_file = "meta.csv"
         self.class_names = None
+        self.is_diffmix = False
 
         self.parse_syn_data_pd(synthetic_dir)
 
-        test_transform = transforms.Compose(
+        self.transform = transforms.Compose(
             [
                 transforms.Resize((image_size, image_size)),
                 transforms.CenterCrop((crop_size, crop_size)),
@@ -49,7 +47,6 @@ class SyntheticDataset(Dataset):
             ]
         )
 
-        self.transform = test_transform
         self.class2label = (
             {name: i for i, name in enumerate(self.class_names)}
             if class2label is None
@@ -61,46 +58,68 @@ class SyntheticDataset(Dataset):
         self.transform = transform
 
     def parse_syn_data_pd(self, synthetic_dir) -> None:
-        if isinstance(synthetic_dir, list):
-            pass
-        elif isinstance(synthetic_dir, str):
+        if isinstance(synthetic_dir, str):
             synthetic_dir = [synthetic_dir]
-        else:
-            raise NotImplementedError("Not supported type")
+        elif not isinstance(synthetic_dir, list):
+            raise NotImplementedError("Unsupported type for synthetic_dir")
+
         meta_df_list = []
 
         for _dir in synthetic_dir:
-            meta_dir = os.path.join(_dir, self.csv_file)
-            meta_df = pd.read_csv(meta_dir)
-            meta_df.loc[:, "Path"] = meta_df["Path"].apply(
-                lambda x: os.path.join(_dir, "data", x)
-            )
-            meta_df_list.append(meta_df)
+            meta_csv_path = os.path.join(_dir, "meta.csv")
+            if os.path.exists(meta_csv_path):
+                self.is_diffmix = True
+                meta_df = pd.read_csv(meta_csv_path)
+                meta_df["Path"] = meta_df["Path"].apply(lambda x: os.path.join(_dir, "data", x))
+                meta_df_list.append(meta_df)
+            else:
+                self.is_diffmix = False
+                data = []
+                class_names = []
+                data_dir = os.path.join(_dir, "data")
+                for class_name in os.listdir(data_dir):
+                    class_path = os.path.join(data_dir, class_name)
+                    if not os.path.isdir(class_path):
+                        continue
+                    class_names.append(class_name.replace("_", " "))
+                    for img_name in os.listdir(class_path):
+                        img_path = os.path.join(class_path, img_name)
+                        data.append({"Path": img_path, "Target Class": class_name.replace("_", " ")})
+                meta_df = pd.DataFrame(data)
+                meta_df_list.append(meta_df)
+
         self.meta_df = pd.concat(meta_df_list).reset_index(drop=True)
 
-        self.syn_nums = len(self.meta_df)
-        self.class_names = list(set(self.meta_df["First Directory"].values))
-        print(f"Syn numbers: {self.syn_nums}\n")
+        if self.is_diffmix:
+            self.class_names = list(set(self.meta_df["First Directory"].values))
+        else:
+            self.class_names = sorted(self.meta_df["Target Class"].unique())
 
-    def get_syn_item_raw(self, idx: int):
-        df_data = self.meta_df.iloc[idx]
-        src_label = self.class2label[df_data["First Directory"]]
-        tar_label = self.class2label[df_data["Second Directory"]]
-        path = df_data["Path"]
-        return path, src_label, tar_label
+        print(f"Synthetic samples: {len(self.meta_df)} | DiffMix-style: {self.is_diffmix}")
 
     def __len__(self) -> int:
-        return self.syn_nums
+        return len(self.meta_df)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
-        path, src_label, target_label = self.get_syn_item_raw(idx)
-        image = Image.open(path).convert("RGB")
-        return {
-            "pixel_values": self.transform(image),
-            "src_label": src_label,
-            "tar_label": target_label,
-        }
+    def __getitem__(self, idx: int) -> dict:
+        df_data = self.meta_df.iloc[idx]
+        path = df_data["Path"]
 
+        if self.is_diffmix:
+            src_label = self.class2label[df_data["First Directory"]]
+            tar_label = self.class2label[df_data["Second Directory"]]
+            image = Image.open(path).convert("RGB")
+            return {
+                "pixel_values": self.transform(image),
+                "src_label": src_label,
+                "tar_label": tar_label,
+            }
+        else:
+            label = self.class2label[df_data["Target Class"]]
+            image = Image.open(path).convert("RGB")
+            return {
+                "pixel_values": self.transform(image),
+                "label": label,
+            }
 
 class HugFewShotDataset(Dataset):
 
@@ -127,122 +146,112 @@ class HugFewShotDataset(Dataset):
     ):
 
         self.examples_per_class = examples_per_class
-        self.num_syn_seeds = num_syn_seeds  # number of seeds to generate synthetic data
-
+        self.num_syn_seeds = num_syn_seeds
         self.synthetic_dir = synthetic_dir
         self.clip_filtered_syn = clip_filtered_syn
         self.return_onehot = return_onehot
 
         if self.synthetic_dir is not None:
-            assert self.return_onehot == True
+            assert self.return_onehot is True
             self.synthetic_probability = synthetic_probability
             self.soft_scaler = soft_scaler
             self.gamma = gamma
             self.target_class_num = target_class_num
             self.parse_syn_data_pd(synthetic_dir)
 
-        train_transform = transforms.Compose(
-            [
-                transforms.Resize((image_size, image_size)),
-                transforms.RandomCrop(crop_size, padding=8),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-            ]
-        )
-        test_transform = transforms.Compose(
-            [
-                transforms.Resize((image_size, image_size)),
-                transforms.CenterCrop((crop_size, crop_size)),
-                transforms.ToTensor(),
-                transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-            ]
-        )
-        self.transform = {"train": train_transform, "val": test_transform}[split]
+        self.transform = {
+            "train": transforms.Compose(
+                [
+                    transforms.Resize((image_size, image_size)),
+                    transforms.RandomCrop(crop_size, padding=8),
+                    transforms.RandomHorizontalFlip(),
+                    transforms.ToTensor(),
+                    transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+                ]
+            ),
+            "val": transforms.Compose(
+                [
+                    transforms.Resize((image_size, image_size)),
+                    transforms.CenterCrop((crop_size, crop_size)),
+                    transforms.ToTensor(),
+                    transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+                ]
+            ),
+        }[split]
 
     def set_transform(self, transform) -> None:
         self.transform = transform
 
     @abc.abstractmethod
     def get_image_by_idx(self, idx: int) -> Image.Image:
-
         return NotImplemented
 
     @abc.abstractmethod
     def get_label_by_idx(self, idx: int) -> int:
-
         return NotImplemented
 
     @abc.abstractmethod
     def get_metadata_by_idx(self, idx: int) -> dict:
-
         return NotImplemented
 
     def parse_syn_data_pd(self, synthetic_dir, filter=True) -> None:
-        if isinstance(synthetic_dir, list):
-            pass
-        elif isinstance(synthetic_dir, str):
+        if isinstance(synthetic_dir, str):
             synthetic_dir = [synthetic_dir]
-        else:
-            raise NotImplementedError("Not supported type")
+        elif not isinstance(synthetic_dir, list):
+            raise NotImplementedError("Unsupported type for synthetic_dir")
+
         meta_df_list = []
+
         for _dir in synthetic_dir:
-            df_basename = (
-                "meta.csv" if not self.clip_filtered_syn else "remained_meta.csv"
-            )
-            meta_dir = os.path.join(_dir, df_basename)
-            meta_df = self.filter_df(pd.read_csv(meta_dir))
-            meta_df.loc[:, "Path"] = meta_df["Path"].apply(
-                lambda x: os.path.join(_dir, "data", x)
-            )
+            df_basename = "meta.csv" if not self.clip_filtered_syn else "remained_meta.csv"
+            meta_path = os.path.join(_dir, df_basename)
+            if not os.path.exists(meta_path):
+                continue
+
+            meta_df = pd.read_csv(meta_path)
+            meta_df["Path"] = meta_df["Path"].apply(lambda x: os.path.join(_dir, "data", x))
+            meta_df = self.filter_df(meta_df)
             meta_df_list.append(meta_df)
+
         self.meta_df = pd.concat(meta_df_list).reset_index(drop=True)
         self.syn_nums = len(self.meta_df)
 
-        print(f"Syn numbers: {self.syn_nums}\n")
+        print(f"Synthetic samples for FewShot: {self.syn_nums}")
 
     def filter_df(self, df: pd.DataFrame) -> pd.DataFrame:
-
         if self.target_class_num is not None:
-            selected_indexs = []
+            selected_indexes = []
             for source_name in self.class_names:
                 target_classes = random.sample(self.class_names, self.target_class_num)
-                indexs = df[
+                indexes = df[
                     (df["First Directory"] == source_name)
                     & (df["Second Directory"].isin(target_classes))
                 ]
-                selected_indexs.append(indexs)
-
-            meta2 = pd.concat(selected_indexs, axis=0)
-            total_num = min(len(meta2), 18000)
-            idxs = random.sample(range(len(meta2)), total_num)
-            meta2 = meta2.iloc[idxs]
-            meta2.reset_index(drop=True, inplace=True)
-            df = meta2
-            print("filter_df", self.target_class_num, len(df))
+                selected_indexes.append(indexes)
+            df = pd.concat(selected_indexes, axis=0).reset_index(drop=True)
+            print(f"Filtered to {len(df)} samples with {self.target_class_num} target classes.")
         return df
 
     def get_syn_item(self, idx: int):
-
         df_data = self.meta_df.iloc[idx]
         src_label = self.class2label[df_data["First Directory"]]
         tar_label = self.class2label[df_data["Second Directory"]]
-        path = df_data["Path"]
         strength = df_data["Strength"]
+
         onehot_label = torch.zeros(self.num_classes)
-        onehot_label[src_label] += self.soft_scaler * (
-            1 - math.pow(strength, self.gamma)
-        )
+        onehot_label[src_label] += self.soft_scaler * (1 - math.pow(strength, self.gamma))
         onehot_label[tar_label] += self.soft_scaler * math.pow(strength, self.gamma)
 
+        path = df_data["Path"]
         return path, onehot_label
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
-
-        if (
+    def __getitem__(self, idx: int) -> dict:
+        use_synthetic = (
             self.synthetic_dir is not None
             and np.random.uniform() < self.synthetic_probability
-        ):
+        )
+
+        if use_synthetic:
             syn_idx = np.random.choice(self.syn_nums)
             path, label = self.get_syn_item(syn_idx)
             image = Image.open(path).convert("RGB")
@@ -250,7 +259,7 @@ class HugFewShotDataset(Dataset):
             image = self.get_image_by_idx(idx)
             label = self.get_label_by_idx(idx)
 
-        if self.return_onehot:
-            if isinstance(label, (int, np.int64)):
-                label = onehot(self.num_classes, label)
+        if self.return_onehot and isinstance(label, (int, np.int64)):
+            label = onehot(self.num_classes, label)
+
         return dict(pixel_values=self.transform(image), label=label)

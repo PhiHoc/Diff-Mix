@@ -8,7 +8,6 @@ from multiprocessing import Process, Queue
 from queue import Empty
 
 import numpy as np
-import pandas as pd
 import torch
 from PIL import Image
 from tqdm import tqdm
@@ -94,11 +93,8 @@ def sample_func(args, in_queue, gpu_id, process_id, environments):
         for index, target_label in tasks:
             target_name = train_dataset.label2class[target_label]
             target_placeholder = name2placeholder[target_name]
-            dataset_name = args.dataset.replace("_", " ")
-
             environment = random.choice(environments) if environments else ""
             prompt = f"a photo of a {target_placeholder}, {environment}".strip()
-            print(prompt)
 
             prompts.append(prompt)
             save_dir = os.path.join(args.output_path, "data", target_name.replace(" ", "_").replace("/", "_"))
@@ -155,25 +151,10 @@ def main(args):
         pbar.refresh()
         for p in processes: p.join()
 
-    print("Generation complete. Generating meta.csv...")
-    rootdir = os.path.join(args.output_path, "data")
-    data_dict = defaultdict(list)
-    for dir_name in os.listdir(rootdir):
-        class_dir = os.path.join(rootdir, dir_name)
-        if not os.path.isdir(class_dir): continue
-        target_dir_name = dir_name.replace("_", " ")
-        for file_name in os.listdir(class_dir):
-            path = os.path.join(dir_name, file_name)
-            data_dict["Path"].append(path)
-            data_dict["Target Class"].append(target_dir_name)
-
-    df = pd.DataFrame(data_dict).sort_values(by=["Target Class", "Path"]).reset_index(drop=True)
-    csv_path = os.path.join(args.output_path, "meta.csv")
-    df.to_csv(csv_path, index=False)
-    print(f"meta.csv saved to {csv_path}")
+    print(f"Generation complete. Images saved under: {os.path.join(args.output_path, 'data')}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser("Diverse Environment Sampling Script")
+    parser = argparse.ArgumentParser("Diverse Environment Sampling Script for SwiftBrush")
     parser.add_argument("--base_model_path", type=str, default="stabilityai/sd-turbo")
     parser.add_argument("--swiftbrush_unet_path", type=str, required=True)
     parser.add_argument("--lora_weights_path", type=str, default=None)
