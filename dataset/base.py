@@ -20,9 +20,6 @@ class SyntheticDataset(Dataset):
     def __init__(
         self,
         synthetic_dir: Union[str, List[str]] = None,
-        gamma: int = 1,
-        soft_scaler: float = 1,
-        num_syn_seeds: int = 999,
         image_size: int = 512,
         crop_size: int = 448,
         class2label: dict = None,
@@ -30,13 +27,9 @@ class SyntheticDataset(Dataset):
         super().__init__()
 
         self.synthetic_dir = synthetic_dir
-        self.num_syn_seeds = num_syn_seeds
-        self.gamma = gamma
-        self.soft_scaler = soft_scaler
-        self.class_names = None
-        self.is_diffmix = False
+        self.use_diffmix = False
 
-        self.parse_syn_data_pd(synthetic_dir)
+        self.parse_synthetic_data(synthetic_dir)
 
         self.transform = transforms.Compose(
             [
@@ -52,53 +45,44 @@ class SyntheticDataset(Dataset):
             if class2label is None
             else class2label
         )
-        self.num_classes = len(self.class2label.keys())
+        self.num_classes = len(self.class2label)
 
-    def set_transform(self, transform) -> None:
-        self.transform = transform
-
-    def parse_syn_data_pd(self, synthetic_dir) -> None:
+    def parse_synthetic_data(self, synthetic_dir) -> None:
         if isinstance(synthetic_dir, str):
             synthetic_dir = [synthetic_dir]
-        elif not isinstance(synthetic_dir, list):
-            raise NotImplementedError("Unsupported type for synthetic_dir")
 
-        meta_df_list = []
+        all_data = []
+        class_names = set()
 
         for _dir in synthetic_dir:
-            meta_csv_path = os.path.join(_dir, "meta.csv")
-            data_dir_path = os.path.join(_dir, "data")
+            meta_path = os.path.join(_dir, "meta.csv")
+            data_dir = os.path.join(_dir, "data")
 
-            if os.path.exists(meta_csv_path):
-                self.is_diffmix = True
-                meta_df = pd.read_csv(meta_csv_path)
+            if os.path.exists(meta_path):
+                self.use_diffmix = True
+                meta_df = pd.read_csv(meta_path)
                 meta_df["Path"] = meta_df["Path"].apply(lambda x: os.path.join(_dir, "data", x))
-                meta_df_list.append(meta_df)
-            elif os.path.exists(data_dir_path):
-                self.is_diffmix = False
-                data = []
-                class_names = []
-                for class_name in os.listdir(data_dir_path):
-                    class_path = os.path.join(data_dir_path, class_name)
+                all_data.append(meta_df)
+            elif os.path.exists(data_dir):
+                for class_name in os.listdir(data_dir):
+                    class_path = os.path.join(data_dir, class_name)
                     if not os.path.isdir(class_path):
                         continue
-                    class_names.append(class_name.replace("_", " "))
+                    class_names.add(class_name.replace("_", " "))
                     for img_name in os.listdir(class_path):
                         img_path = os.path.join(class_path, img_name)
-                        data.append({"Path": img_path, "Target Class": class_name.replace("_", " ")})
-                meta_df = pd.DataFrame(data)
-                meta_df_list.append(meta_df)
+                        all_data.append({"Path": img_path, "Target Class": class_name.replace("_", " ")})
             else:
-                raise ValueError(f"Synthetic directory {_dir} missing both meta.csv and data folder.")
+                raise ValueError(f"Synthetic dir {_dir} missing both meta.csv and data folder.")
 
-        self.meta_df = pd.concat(meta_df_list).reset_index(drop=True)
-
-        if self.is_diffmix:
-            self.class_names = list(set(self.meta_df["First Directory"].values))
+        if self.use_diffmix:
+            self.meta_df = pd.concat(all_data).reset_index(drop=True)
+            self.class_names = sorted(self.meta_df["First Directory"].unique())
         else:
-            self.class_names = sorted(self.meta_df["Target Class"].unique())
+            self.meta_df = pd.DataFrame(all_data)
+            self.class_names = sorted(list(class_names))
 
-        print(f"Synthetic samples: {len(self.meta_df)} | DiffMix-style: {self.is_diffmix}")
+        print(f"Synthetic samples: {len(self.meta_df)} | DiffMix-style: {self.use_diffmix}")
 
     def __len__(self) -> int:
         return len(self.meta_df)
@@ -107,7 +91,7 @@ class SyntheticDataset(Dataset):
         df_data = self.meta_df.iloc[idx]
         path = df_data["Path"]
 
-        if self.is_diffmix:
+        if self.use_diffmix:
             src_label = self.class2label[df_data["First Directory"]]
             tar_label = self.class2label[df_data["Second Directory"]]
             image = Image.open(path).convert("RGB")
@@ -125,33 +109,50 @@ class SyntheticDataset(Dataset):
             }
 
 class HugFewShotDataset(Dataset):
+    num_classes: int = None
+    class_names: int = None
+    class2label: dict = None
+    label2class: dict = None
+
     def __init__(
         self,
-        root_dir: str,
+        split: str = "train",
+        examples_per_class: int = None,
+        synthetic_probability: float = 0.5,
+        return_onehot: bool = False,
+        soft_scaler: float = 1,
+        synthetic_dir: Union[str, List[str]] = None,
         image_size: int = 512,
         crop_size: int = 448,
-        class2label: dict = None,
-    ) -> None:
-        super().__init__()
+        gamma: int = 1,
+        num_syn_seeds: int = 99999,
+        clip_filtered_syn: bool = False,
+        target_class_num: int = None,
+        **kwargs,
+    ):
+        self.examples_per_class = examples_per_class
+        self.num_syn_seeds = num_syn_seeds
+        self.synthetic_dir = synthetic_dir
+        self.clip_filtered_syn = clip_filtered_syn
+        self.return_onehot = return_onehot
 
-        self.root_dir = root_dir
+        if self.synthetic_dir is not None:
+            self.synthetic_probability = synthetic_probability
+            self.soft_scaler = soft_scaler
+            self.gamma = gamma
+            self.target_class_num = target_class_num
+            self.parse_syn_data_pd(synthetic_dir)
 
-        class_names = [d for d in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, d))]
-        self.class_names = sorted([name.replace("_", " ") for name in class_names])
-        self.class2label = (
-            {name: i for i, name in enumerate(self.class_names)}
-            if class2label is None
-            else class2label
+        train_transform = transforms.Compose(
+            [
+                transforms.Resize((image_size, image_size)),
+                transforms.RandomCrop(crop_size, padding=8),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+            ]
         )
-
-        self.samples = []
-        for class_name in class_names:
-            class_path = os.path.join(root_dir, class_name)
-            for img_name in os.listdir(class_path):
-                img_path = os.path.join(class_path, img_name)
-                self.samples.append({"Path": img_path, "Target Class": class_name.replace("_", " ")})
-
-        self.transform = transforms.Compose(
+        test_transform = transforms.Compose(
             [
                 transforms.Resize((image_size, image_size)),
                 transforms.CenterCrop((crop_size, crop_size)),
@@ -159,19 +160,33 @@ class HugFewShotDataset(Dataset):
                 transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
             ]
         )
+        self.transform = {"train": train_transform, "val": test_transform}[split]
 
-        self.num_classes = len(self.class_names)
+    def set_transform(self, transform) -> None:
+        self.transform = transform
 
-    def __len__(self) -> int:
-        return len(self.samples)
+    @abc.abstractmethod
+    def get_image_by_idx(self, idx: int) -> Image.Image:
+        return NotImplemented
 
-    def __getitem__(self, idx: int) -> dict:
-        sample = self.samples[idx]
-        path = sample["Path"]
-        label = self.class2label[sample["Target Class"]]
-        image = Image.open(path).convert("RGB")
+    @abc.abstractmethod
+    def get_label_by_idx(self, idx: int) -> int:
+        return NotImplemented
 
-        return {
-            "pixel_values": self.transform(image),
-            "label": label,
-        }
+    @abc.abstractmethod
+    def get_metadata_by_idx(self, idx: int) -> dict:
+        return NotImplemented
+
+    def parse_syn_data_pd(self, synthetic_dir, filter=True) -> None:
+        if isinstance(synthetic_dir, str):
+            synthetic_dir = [synthetic_dir]
+        meta_df_list = []
+        for _dir in synthetic_dir:
+            df_basename = "meta.csv" if not self.clip_filtered_syn else "remained_meta.csv"
+            meta_path = os.path.join(_dir, df_basename)
+            meta_df = self.filter_df(pd.read_csv(meta_path))
+            meta_df["Path"] = meta_df["Path"].apply(lambda x: os.path.join(_dir, "data", x))
+            meta_df_list.append(meta_df)
+        self.meta_df = pd.concat(meta_df_list).reset_index(drop=True)
+        self.syn_nums = len(self.meta_df)
+        print(f"Syn numbers: {self.syn_nums}")
