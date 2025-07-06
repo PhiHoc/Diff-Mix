@@ -10,15 +10,14 @@ import numpy as np
 import torch
 import torch.nn as nn
 import yaml
-from PIL.Image import Image
+from PIL import Image
 from torchvision.models import ViT_B_16_Weights, resnet18, resnet50, vit_b_16
 from tqdm import tqdm
-
-from dataset.base import SyntheticDataset
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../"))
 
 from dataset import DATASET_NAME_MAPPING
+from dataset.base import SyntheticDataset
 from downstream_tasks.losses import LabelSmoothingLoss
 from downstream_tasks.mixup import CutMix, mixup_data
 from utils.network import freeze_model
@@ -234,33 +233,43 @@ if args.data_mode == 'probabilistic':
     nb_class = train_set.num_classes
 
 elif args.data_mode == 'concat':
-    print("===== Concatenate =====")
+    print("===== Chế độ tải dữ liệu: Concatenate (Tái sử dụng base.py) =====")
 
+    # 1. Tải bộ dữ liệu gốc với HARD LABEL (dùng HugFewShotDataset)
     original_train_set = DATASET_NAME_MAPPING[datasets_name](
         split="train",
         image_size=re_size,
         crop_size=crop_size,
         return_onehot=True,
-        synthetic_dir=None,
+        synthetic_dir=None,  # Tắt chế độ tổng hợp để chỉ lấy ảnh gốc
         examples_per_class=examples_per_class,
         image_train_dir=args.train_data_dir,
         image_test_dir=args.test_data_dir,
     )
     nb_class = original_train_set.num_classes
 
+
+    # 2. Định nghĩa lớp Dataset cho dữ liệu tổng hợp bằng cách KẾ THỪA từ SyntheticDataset
     class SyntheticSoftLabelDataset(SyntheticDataset):
+        # Lớp này kế thừa toàn bộ logic đọc file và __len__ từ SyntheticDataset
+
         def __init__(self, *args, **kwargs):
+            # Lưu lại các tham số cần cho soft label
             self.gamma = kwargs.pop('gamma', 1.0)
             self.soft_scaler = kwargs.pop('soft_scaler', 1.0)
+            # Gọi hàm khởi tạo của lớp cha (SyntheticDataset)
             super().__init__(*args, **kwargs)
 
         def __getitem__(self, idx: int) -> dict:
+            # Lấy dữ liệu thô từ lớp cha (ảnh và nhãn integer)
             path, src_label, tar_label = self.get_syn_item_raw(idx)
             image = Image.open(path).convert("RGB")
 
+            # Đọc strength từ dataframe
             df_data = self.meta_df.iloc[idx]
             strength = df_data["Strength"]
 
+            # Tính toán SOFT LABEL - logic tương tự HugFewShotDataset
             soft_label = torch.zeros(self.num_classes)
             soft_label[src_label] += self.soft_scaler * (1 - math.pow(strength, self.gamma))
             soft_label[tar_label] += self.soft_scaler * math.pow(strength, self.gamma)
@@ -280,14 +289,18 @@ elif args.data_mode == 'concat':
         )
         datasets_to_concat.append(synthetic_soft_label_set)
 
+    # 3. Gộp các bộ dữ liệu lại
     train_set = ConcatDataset(datasets_to_concat)
     print(f"Tổng số ảnh trong bộ train sau khi gộp: {len(train_set)}")
 
+
+    # 4. Collate function (cả hai dataset giờ đều trả về tensor label)
     def collate_fn(examples):
         pixel_values = torch.stack([example["pixel_values"] for example in examples])
         labels = torch.stack([example["label"] for example in examples])
         return {"pixel_values": pixel_values, "labels": labels}
 
+# Luôn cần định nghĩa test_set
 test_set = DATASET_NAME_MAPPING[datasets_name](
     split="val", image_size=re_size, crop_size=crop_size, return_onehot=return_onehot,
     image_train_dir=args.train_data_dir,
@@ -296,6 +309,7 @@ test_set = DATASET_NAME_MAPPING[datasets_name](
 
 batch_size = min(args.batch_size, len(train_set))
 
+# Logic CutMix nên được áp dụng sau khi đã có train_set cuối cùng
 if args.use_cutmix:
     if args.data_mode == 'concat':
         print("Lưu ý: CutMix đang được áp dụng trên bộ dữ liệu đã gộp.")
@@ -303,20 +317,24 @@ if args.use_cutmix:
         train_set, num_class=nb_class, prob=args.mixup_probability
     )
 
+# Tạo DataLoader từ train_set đã được xác định ở trên
 train_loader = DataLoader(
     train_set,
     batch_size=batch_size,
     shuffle=True,
-    collate_fn=collate_fn,
+    collate_fn=collate_fn,  # Dùng collate_fn tương ứng với mode
     num_workers=num_workers,
 )
 
+
+# Collate_fn cho eval loader (cần one-hot nếu loss function yêu cầu)
 def eval_collate_fn(examples):
     pixel_values = torch.stack([example["pixel_values"] for example in examples])
     labels = torch.stack([to_tensor(example["label"]) for example in examples])
     dtype = torch.float32 if len(labels.size()) == 2 else torch.long
     labels = labels.to(dtype=dtype)
     return {"pixel_values": pixel_values, "labels": labels}
+
 
 eval_loader = DataLoader(
     test_set,
@@ -332,6 +350,7 @@ MODEL_DICT = {
     "vit_b_16": vit_b_16,
 }
 
+##### Model settings
 if args.model == "resnet18":
     net = resnet18(pretrained=False)
     net.fc = nn.Linear(net.fc.in_features, nb_class)
@@ -353,6 +372,7 @@ for param in net.parameters():
 if args.finetune_strategy is not None and args.model == "resnet50":
     freeze_model(net, args.finetune_strategy)
 
+##### optimizer setting
 if args.criterion == "ce":
     criterion = nn.CrossEntropyLoss()
 elif args.criterion == "ls":
@@ -371,10 +391,11 @@ total_steps = args.nepoch * len(train_loader.dataset) // batch_size
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)
 warmup_scheduler = pytorch_warmup.LinearWarmup(optimizer, warmup_period=max(int(0.1 * total_steps), 1))
 
+##### file/folder prepare
 if not os.path.exists(exp_dir):
     os.makedirs(exp_dir)
 
-shutil.copyfile(__file__, exp_dir + "/train_diffmix.py")
+shutil.copyfile(__file__, exp_dir + "/train_hub.py")
 
 with open(os.path.join(exp_dir, "config.yaml"), "w+", encoding="utf-8") as file:
     yaml.dump(vars(args), file)
@@ -382,6 +403,7 @@ with open(os.path.join(exp_dir, "config.yaml"), "w+", encoding="utf-8") as file:
 with open(os.path.join(exp_dir, "train_log.csv"), "w+", encoding="utf-8") as file:
     file.write("Epoch, lr, Train_Loss, Train_Acc, Test_Acc\n")
 
+##### Apex or AMP setup
 if use_amp == 1:
     print("\n===== Using NVIDIA AMP =====")
     from apex import amp
@@ -392,6 +414,7 @@ elif use_amp == 2:
 else:
     scaler = None
 
+##### Resume checkpoint
 checkpoint_path = os.path.join(exp_dir, "checkpoint.pth")
 metrics_path = os.path.join(exp_dir, "metrics.json")
 
@@ -419,6 +442,7 @@ if os.path.exists(checkpoint_path):
             if isinstance(v, torch.Tensor):
                 state[k] = v.to(device)
 
+##### Training loop
 min_train_loss = float("inf")
 max_eval_acc = 0
 
