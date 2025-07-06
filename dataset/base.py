@@ -124,7 +124,7 @@ class SyntheticDataset(Dataset):
                 "label": label,
             }
 
-class RealDataset(Dataset):
+class HugFewShotDataset(Dataset):
     def __init__(
         self,
         root_dir: str,
