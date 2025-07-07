@@ -10,6 +10,8 @@ from .instance.waterbird import *
 from .instance.bear import *
 from .instance.turtle import *
 from .instance.python import *
+from .instance.panther import *
+from .instance.gibon import *
 
 DATASET_NAME_MAPPING = {
     "cub": CUBBirdHugDataset,
@@ -23,6 +25,9 @@ DATASET_NAME_MAPPING = {
     "bear": BearHugDataset,
     "turtle": TurtleHugDataset,
     "python": PythonHugDataset,
+    "panther": PantherHugDataset,
+    "gibon": GibonHugDataset,
+
 }
 IMBALANCE_DATASET_NAME_MAPPING = {
     "cub": CUBBirdHugImbalanceDataset,
@@ -33,7 +38,9 @@ T2I_DATASET_NAME_MAPPING = {
     "flower": FlowersDatasetForT2I,
     "bear": BearHugDatasetForT2I,
     "turtle": TurtleHugDatasetForT2I,
-    "python": PythonHugDatasetForT2I
+    "python": PythonHugDatasetForT2I,
+    "panther": PantherHugDatasetForT2I,
+    "gibon": GibonHugDatasetForT2I,
 }
 T2I_IMBALANCE_DATASET_NAME_MAPPING = {
     "cub": CUBBirdHugImbalanceDatasetForT2I,
