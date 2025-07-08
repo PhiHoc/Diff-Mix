@@ -25,8 +25,9 @@ from dataset import DATASET_NAME_MAPPING, IMBALANCE_DATASET_NAME_MAPPING
 from utils.misc import parse_finetuned_ckpt
 import shutil
 
-def check_args_valid(args):
 
+def check_args_valid(args):
+    # Check if arguments are valid based on sample strategy
     if args.sample_strategy == "real-gen":
         args.lora_path = None
         args.embed_path = None
@@ -46,7 +47,6 @@ def check_args_valid(args):
 
 
 def sample_func(args, in_queue, out_queue, gpu_id, process_id):
-
     os.environ["CURL_CA_BUNDLE"] = ""
 
     random.seed(args.seed + process_id)
@@ -103,9 +103,7 @@ def sample_func(args, in_queue, out_queue, gpu_id, process_id):
             print(f"Warning: No indices found for target label {target_label}. Skipping batch.")
             continue
 
-        target_indice = random.sample(train_dataset.label_to_indices[target_label], 1)[
-            0
-        ]
+        target_indice = random.sample(train_dataset.label_to_indices[target_label], 1)[0]
         target_metadata = train_dataset.get_metadata_by_idx(target_indice)
         target_name = target_metadata["name"].replace(" ", "_").replace("/", "_")
 
@@ -144,34 +142,32 @@ def sample_func(args, in_queue, out_queue, gpu_id, process_id):
 
 def distribute_samples_cumulatively(master_path, base_output_root, base_folder_name, max_samples_per_class):
     """
-    Đọc dữ liệu từ thư mục master, tạo các thư mục con theo các mốc số lượng,
-    và sao chép dữ liệu một cách lũy tiến.
+    Reads data from the master folder, creates subfolders based on the sample count,
+    and distributes the data progressively.
     """
-    print("\n===== Bắt đầu quá trình phân phối dữ liệu =====")
+    print("\n===== Starting the data distribution process =====")
     master_csv_path = os.path.join(master_path, "meta.csv")
     if not os.path.exists(master_csv_path):
-        print(f"Lỗi: Không tìm thấy tệp meta.csv trong thư mục master: {master_csv_path}")
+        print(f"Error: meta.csv file not found in the master directory: {master_csv_path}")
         return
 
     master_df = pd.read_csv(master_csv_path)
 
-    # Sắp xếp để đảm bảo tính nhất quán khi lấy mẫu
+    # Sort to ensure consistency when sampling
     master_df.sort_values(by=["Second Directory", "Number"], inplace=True)
 
-    # Nhóm dữ liệu theo lớp đích (target class)
+    # Group data by target class
     grouped = master_df.groupby("Second Directory")
 
-    # Xác định các mốc số lượng cần tạo
-    steps = [50, 100]
-    steps.extend(range(200, max_samples_per_class + 1, 100))
-
+    # Define the steps for sample count
+    steps = args.steps
     for num_samples in steps:
         if num_samples > max_samples_per_class:
             continue
 
-        print(f"--- Đang tạo thư mục cho {num_samples} ảnh/lớp ---")
+        print(f"--- Creating folder for {num_samples} images/class ---")
 
-        # Tạo tên và đường dẫn thư mục mới
+        # Create new folder names and paths
         new_folder_name = f"{base_folder_name}_{num_samples}samples"
         output_path = os.path.join(base_output_root, new_folder_name)
         output_data_path = os.path.join(output_path, "data")
@@ -179,43 +175,39 @@ def distribute_samples_cumulatively(master_path, base_output_root, base_folder_n
 
         final_df_for_step = []
 
-        # Lặp qua từng lớp
+        # Loop through each class
         for class_name, group_df in grouped:
-            # Lấy N mẫu đầu tiên cho lớp này
             samples_for_class = group_df.head(num_samples)
             final_df_for_step.append(samples_for_class)
 
-            # Tạo thư mục con cho lớp
+            # Create subfolder for the class
             class_folder_path = os.path.join(output_data_path, class_name.replace(" ", "_").replace("/", "_"))
             os.makedirs(class_folder_path, exist_ok=True)
 
-            # Sao chép file ảnh
+            # Copy images
             for _, row in samples_for_class.iterrows():
                 source_image_path = os.path.join(master_path, "data", row["Path"])
                 dest_image_path = os.path.join(output_data_path, row["Path"])
 
-                # Đảm bảo thư mục đích tồn tại trước khi copy
+                # Ensure the target directory exists before copying
                 os.makedirs(os.path.dirname(dest_image_path), exist_ok=True)
 
                 if os.path.exists(source_image_path):
                     shutil.copy(source_image_path, dest_image_path)
                 else:
-                    print(f"Cảnh báo: Không tìm thấy file nguồn {source_image_path}")
+                    print(f"Warning: Source file not found {source_image_path}")
 
-        # Tạo và lưu file meta.csv mới
+        # Save the meta.csv for this step
         if final_df_for_step:
             final_df = pd.concat(final_df_for_step).reset_index(drop=True)
             final_csv_path = os.path.join(output_path, "meta.csv")
             final_df.to_csv(final_csv_path, index=False)
-            print(f"Đã tạo thành công thư mục '{new_folder_name}' với {len(final_df)} ảnh.")
+            print(f"Successfully created folder '{new_folder_name}' with {len(final_df)} images.")
 
-    print("===== Quá trình phân phối dữ liệu hoàn tất! =====")
-    # Tùy chọn: Xóa thư mục master để tiết kiệm dung lượng
-    # print("Đang xóa thư mục master tạm thời...")
-    # shutil.rmtree(master_path)
+    print("===== Data distribution process completed! =====")
+
 
 def main(args):
-
     torch.multiprocessing.set_start_method("spawn")
 
     base_output_root = os.path.join(args.output_root, args.dataset)
@@ -243,6 +235,7 @@ def main(args):
     in_queue = Queue()
     out_queue = Queue()
 
+    # Load dataset based on the task (imbalanced or vanilla)
     if args.task == "imbalanced":
         train_dataset = IMBALANCE_DATASET_NAME_MAPPING[args.dataset](
             split="train",
@@ -250,7 +243,7 @@ def main(args):
             resolution=args.resolution,
             imbalance_factor=args.imbalance_factor,
             image_train_dir=args.train_data_dir,
-            image_test_dir=args.test_data_dir, 
+            image_test_dir=args.test_data_dir,
         )
     else:
         train_dataset = DATASET_NAME_MAPPING[args.dataset](
@@ -259,39 +252,31 @@ def main(args):
             examples_per_class=args.examples_per_class,
             resolution=args.resolution,
             image_train_dir=args.train_data_dir,
-            image_test_dir=args.test_data_dir, 
+            image_test_dir=args.test_data_dir,
         )
 
-    num_classes = len(train_dataset.class_names)
-
+    # Process classes and create necessary directories for saving samples
     for name in train_dataset.class_names:
         name = name.replace(" ", "_").replace("/", "_")
         os.makedirs(os.path.join(args.output_path, "data", name), exist_ok=True)
 
+    # Define the number of tasks and samples per class
     num_classes = len(train_dataset.class_names)
     num_tasks = args.syn_dataset_mulitiplier * len(train_dataset)
-
-    # 1. Tạo danh sách LỚP ĐÍCH (target_classes) một cách cân bằng
     samples_per_class = num_tasks // num_classes
-    target_classes = []
-    for i in range(num_classes):
-        target_classes.extend([i] * samples_per_class)
 
-    # Xử lý phần dư nếu num_tasks không chia hết cho num_classes
+    # Handle any remainder if the number of tasks doesn't divide evenly
     remainder = num_tasks % num_classes
+    target_classes = []
     if remainder > 0:
         target_classes.extend(random.sample(range(num_classes), remainder))
 
-    # Xáo trộn danh sách lớp đích để đảm bảo tính ngẫu nhiên trong quá trình xử lý
+    # Shuffle target classes to ensure randomness
     random.shuffle(target_classes)
 
-    # 2. Tạo danh sách LỚP NGUỒN (source_classes)
-    # Chúng ta vẫn muốn lớp nguồn được chọn ngẫu nhiên để tối đa hóa sự đa dạng về bối cảnh
     if args.sample_strategy in ["real-gen", "real-aug", "diff-aug", "diff-gen", "ti-aug"]:
-        # Đối với các chiến lược augmentation, nguồn và đích là một
         source_classes = target_classes
     elif args.sample_strategy in ["real-mix", "diff-mix", "ti-mix"]:
-        # Đối với các chiến lược mixup, nguồn được chọn ngẫu nhiên hoàn toàn
         source_classes = random.choices(range(num_classes), k=num_tasks)
     else:
         raise ValueError(f"Augmentation strategy {args.sample_strategy} not supported")
@@ -312,10 +297,11 @@ def main(args):
     sample_config["sample_strategy"] = args.sample_strategy
 
     with open(
-        os.path.join(args.output_path, "config.yaml"), "w", encoding="utf-8"
+            os.path.join(args.output_path, "config.yaml"), "w", encoding="utf-8"
     ) as f:
         yaml.dump(sample_config, f)
 
+    # Start parallel processes for sampling images
     processes = []
     total_tasks = in_queue.qsize()
     print("Number of total tasks", total_tasks)
@@ -338,7 +324,7 @@ def main(args):
         for process in processes:
             process.join()
 
-    # Generate meta.csv for indexing images
+    # Validate generated images
     rootdir = os.path.join(args.output_path, "data")
     pattern_level_1 = r"(.+)"
     pattern_level_2 = r"(.+)-(\d+)-(.+).png"
@@ -380,9 +366,11 @@ def main(args):
     print("DataFrame:")
     print(df)
 
+    # Call the distribution function if necessary
     if args.create_cumulative_steps:
         if args.examples_per_class <= 0:
-            print("Lỗi: Cần cung cấp --examples_per_class (số ảnh gốc mỗi lớp) để tính toán đúng số lượng ảnh sinh ra.")
+            print(
+                "Error: --examples_per_class needs to be provided to correctly calculate the number of synthetic images.")
             return
 
         max_samples_per_class = args.syn_dataset_mulitiplier * args.examples_per_class
@@ -394,7 +382,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--create_cumulative_steps",
         action="store_true",
-        help="Kích hoạt chế độ tạo nhiều thư mục con với số lượng ảnh lũy tiến."
+        help="Enable creating multiple subdirectories with cumulative sample counts."
+    )
+    parser.add_argument(
+        "--steps",
+        type=int,
+        nargs="*",
+        default=[100, 300, 500],  # Default steps
+        help="List of sample count steps (default: 100 300 500)"
     )
     parser.add_argument(
         "--finetuned_ckpt",
@@ -490,6 +485,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--aug_strength", type=float, default=0.5, help="augmentation strength"
     )
+
     args = parser.parse_args()
 
     main(args)
