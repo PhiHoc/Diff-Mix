@@ -155,15 +155,10 @@ def distribute_samples_cumulatively(master_path, base_output_root, base_folder_n
 
     master_df = pd.read_csv(master_csv_path)
 
-    # Sắp xếp để đảm bảo tính nhất quán khi lấy mẫu
     master_df.sort_values(by=["Second Directory", "Number"], inplace=True)
-
-    # Nhóm dữ liệu theo lớp đích (target class)
     grouped = master_df.groupby("Second Directory")
 
-    # Xác định các mốc số lượng cần tạo
-    steps = [50, 100]
-    steps.extend(range(200, max_samples_per_class + 1, 100))
+    steps = [100, 300, 500]
 
     for num_samples in steps:
         if num_samples > max_samples_per_class:
