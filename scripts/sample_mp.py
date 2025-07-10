@@ -158,7 +158,7 @@ def distribute_samples_cumulatively(master_path, base_output_root, base_folder_n
     master_df.sort_values(by=["Second Directory", "Number"], inplace=True)
     grouped = master_df.groupby("Second Directory")
 
-    steps = [100, 300, 500]
+    steps = [100, 300]
 
     for num_samples in steps:
         if num_samples > max_samples_per_class:
