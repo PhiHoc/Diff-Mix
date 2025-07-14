@@ -472,7 +472,7 @@ for epoch in range(start_epoch, args.nepoch):
                 scaled_loss.backward()
             optimizer.step()
         elif use_amp == 2:
-            with autocast():
+            with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
                 outputs = net(inputs)
                 loss = criterion(outputs, targets)
             scaler.scale(loss).backward()
@@ -499,7 +499,7 @@ for epoch in range(start_epoch, args.nepoch):
     print(f"Train | lr: {lr_now:.4f} | Loss: {train_loss:.4f} | Acc: {train_acc:.3f}% ({train_correct}/{train_total})")
 
     ##### Evaluation every epochs
-    if epoch % 1 == 0:
+    if (epoch + 1) % 4 == 0:
         net.eval()
         eval_correct = 0
         eval_total = 0
